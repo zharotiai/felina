@@ -1,22 +1,22 @@
 
 use std::fmt;
 
-// Can make generic lter
-// Maybe Tensor<T: Multiply> or something
 
+
+// Could make generic at some point
+// Tensor<T: Multiply>
 pub struct Tensor {
-    // Storing data in a contiguous Vec for cache locality
-    data: Vec<f32>,
-
-    // Using the shape to index into it.
     shape: Vec<usize>,
+
+    // Contiguous storage for cache locality.
+    data: Vec<f32>,
 }
 
 impl Tensor {
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Result<Self, TensorError> {
-        let expected: usize = shape.iter().product();
+        let expected = Self::get_expected_num_elements(&shape)?;
 
-        // Can't make a Tensor with a different shape to the data inputted
+        // Ensure the data length matches the shape.
         if data.len() != expected {
             return Err(TensorError::ShapeMismatch {
                 expected,
@@ -24,18 +24,34 @@ impl Tensor {
             });
         }
 
-        Ok(Self {
-            data,
-            shape,
-        })
+        Ok(Self { shape, data })
     }
 
-    pub fn zeros(shape: Vec<usize>) -> Self {
-        todo!()
+    pub fn zeros(shape: Vec<usize>) -> Result<Self, TensorError> {
+        Self::filled(shape, 0.0)
     }
 
-    pub fn ones(shape: Vec<usize>) -> Self {
-        todo!()
+    pub fn ones(shape: Vec<usize>) -> Result<Self, TensorError> {
+        Self::filled(shape, 1.0)
+    }
+
+    fn filled(shape: Vec<usize>, value: f32) -> Result<Self, TensorError> {
+        let n = Self::get_expected_num_elements(&shape)?;
+
+        let mut data = Vec::new();
+
+        data.try_reserve_exact(n)
+            .map_err(|_| TensorError::AllocationFailed)?;
+
+        data.resize(n, value);
+
+        Ok(Self { shape, data })
+    }
+
+    fn get_expected_num_elements(shape: &[usize]) -> Result<usize, TensorError> {
+        shape.iter()
+            .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
+            .ok_or(TensorError::ShapeOverflow)
     }
 
     pub fn shape(&self) -> &[usize] {
