@@ -1,7 +1,6 @@
 
 use felina::tensor::{Tensor, TensorError};
 
-// TODO: better organise the test folder
 
 #[test]
 fn test_add() {

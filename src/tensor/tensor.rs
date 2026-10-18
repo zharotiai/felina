@@ -5,6 +5,9 @@ use super::TILE_SIZE;
 // Could make generic at some point:
 // Tensor<T: Multiply>
 
+// TODO: Could have types.rs and all the iplmementations in separated files
+
+
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Tensor {
@@ -200,10 +203,11 @@ impl fmt::Display for TensorError {
                     "Cannot multiply tensors with shapes {left:?} and {right:?}"
                 )
             }
-            TensorError::ElementwiseShapeMismatch { left, right } => write!(
-                f,
-                "Cannot perform elementwise operation on tensors with shapes {left:?} and {right:?}"
-            ),
+            TensorError::ElementwiseShapeMismatch { left, right } => 
+                write!(
+                    f,
+                    "Cannot perform elementwise operation on tensors with shapes {left:?} and {right:?}"
+                ),
         }
     }
 }
