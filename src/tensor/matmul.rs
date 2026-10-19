@@ -1,29 +1,63 @@
+
 use super::{Tensor, TensorError, TILE_SIZE};
 
 impl Tensor {
-     pub fn matmul(&self, other: &Tensor) -> Result<Tensor, TensorError> { 
-        let left_shape = &self.shape; 
-        let right_shape = &other.shape; 
+    /// Matrix multiplication using two tensors.
+    ///
+    /// Preserves the existing API while delegating to `matmul_slices`.
+    pub fn matmul(&self, other: &Tensor) -> Result<Tensor, TensorError> {
+        Self::matmul_slices(
+            &self.data,
+            &self.shape,
+            &other.data,
+            &other.shape,
+        )
+    }
 
+    /// Matrix multiplication over borrowed, contiguous row-major data.
+    ///
+    /// The input slices are not copied. Only the output tensor is allocated.
+    ///
+    /// `left_shape` and `right_shape` describe the corresponding data slices.
+    pub fn matmul_slices(
+        left_data: &[f32],
+        left_shape: &[usize],
+        right_data: &[f32],
+        right_shape: &[usize],
+    ) -> Result<Tensor, TensorError> {
         if left_shape.is_empty() || right_shape.is_empty() {
             return Err(TensorError::MatmulShapeMismatch {
-                left: left_shape.clone(),
-                right: right_shape.clone(),
+                left: left_shape.to_vec(),
+                right: right_shape.to_vec(),
             });
         }
 
-        // Matching PyTorch semantics
-        // Vectors are treated differently from n x 1 matrices
-        // As are scalars different from 1x1 matrices
+        // Validate that each slice contains exactly the number of elements
+        // described by its shape.
+        let expected_left = Self::get_expected_num_elements(left_shape)?;
+        let expected_right = Self::get_expected_num_elements(right_shape)?;
+
+        if left_data.len() != expected_left {
+            return Err(TensorError::ShapeMismatch {
+                expected: expected_left,
+                actual: left_data.len(),
+            });
+        }
+
+        if right_data.len() != expected_right {
+            return Err(TensorError::ShapeMismatch {
+                expected: expected_right,
+                actual: right_data.len(),
+            });
+        }
+
+        // Matching PyTorch semantics:
+        // vectors are treated differently from n x 1 matrices.
         let left_is_vector = left_shape.len() == 1;
         let right_is_vector = right_shape.len() == 1;
 
         // Treat vectors as matrices internally:
         // [K] becomes [1, K] on the left and [K, 1] on the right.
-
-        // In general tensor multiplication
-        // We contract the second last dimension of the right tensor
-        // with the last dimension of the left one
         let (m, k) = if left_is_vector {
             (1, left_shape[0])
         } else {
@@ -44,8 +78,8 @@ impl Tensor {
 
         if k != other_k {
             return Err(TensorError::MatmulShapeMismatch {
-                left: left_shape.clone(),
-                right: right_shape.clone(),
+                left: left_shape.to_vec(),
+                right: right_shape.to_vec(),
             });
         }
 
@@ -62,17 +96,15 @@ impl Tensor {
             &right_shape[..right_shape.len() - 2]
         };
 
-        // Batching treats everything as batches of 2d matrices
-
         // Right-align batch dimensions and apply broadcasting.
         let batch_shape =
-            Self::broadcast_batch_shapes(left_batch, right_batch).ok_or_else(|| {
-                TensorError::MatmulShapeMismatch {
-                    left: left_shape.clone(),
-                    right: right_shape.clone(),
-                }
-            })?;
-        
+            Self::broadcast_batch_shapes(left_batch, right_batch).ok_or_else(
+                || TensorError::MatmulShapeMismatch {
+                    left: left_shape.to_vec(),
+                    right: right_shape.to_vec(),
+                },
+            )?;
+
         let mut output_shape = batch_shape.clone();
         output_shape.push(m);
         output_shape.push(n);
@@ -119,10 +151,10 @@ impl Tensor {
                         for row in row_start..row_end {
                             for inner in inner_start..inner_end {
                                 let a =
-                                    self.data[left_base + row * k + inner];
+                                    left_data[left_base + row * k + inner];
 
                                 for col in col_start..col_end {
-                                    let b = other.data[
+                                    let b = right_data[
                                         right_base + inner * n + col
                                     ];
 
@@ -137,7 +169,8 @@ impl Tensor {
             }
         }
 
-        let mut result_shape = batch_shape; 
+        // Restore vector-specific output dimensions.
+        let mut result_shape = batch_shape;
 
         if !left_is_vector {
             result_shape.push(m);
@@ -153,7 +186,7 @@ impl Tensor {
     }
 
     fn broadcast_batch_shapes(
-        left: &[usize], 
+        left: &[usize],
         right: &[usize],
     ) -> Option<Vec<usize>> {
         let rank = left.len().max(right.len());
@@ -179,7 +212,6 @@ impl Tensor {
 
         Some(result)
     }
-
 
     fn broadcast_batch_offset(
         flat_index: usize,

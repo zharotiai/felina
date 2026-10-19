@@ -1,6 +1,7 @@
 use std::fmt;
 use crate::tensor::{Tensor, TensorError};
 use super::kv_cache::KvCacheError;
+use super::paged_cache::PagedKvCacheError;
 
 pub struct AttentionInput<'a> {
     pub q: &'a Tensor,
@@ -28,6 +29,7 @@ pub enum AttentionError {
     InvalidTensorIndex,
     Tensor(TensorError),
     KvCache(KvCacheError),
+    PagedKvCache(PagedKvCacheError),
 }
 
 impl From<TensorError> for AttentionError {
@@ -49,6 +51,7 @@ impl std::error::Error for AttentionError {
             AttentionError::InvalidShape
             | AttentionError::InvalidTensorIndex => None,
             AttentionError::KvCache(err) => Some(err),
+            AttentionError::PagedKvCache(err) => Some(err),
         }
     }
 }
@@ -68,9 +71,19 @@ impl fmt::Display for AttentionError {
             AttentionError::KvCache(err) => {
                 write!(f, "KV cache error: {err}")
             }
+            AttentionError::PagedKvCache(err) => {
+                write!(f, "Paged KV cache error: {err}")
+            }
         }
     }
 }
+
+impl From<PagedKvCacheError> for AttentionError {
+    fn from(err: PagedKvCacheError) -> Self {
+        Self::PagedKvCache(err)
+    }
+}
+
 
 
 

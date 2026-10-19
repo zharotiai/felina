@@ -1,5 +1,10 @@
 use crate::tensor::Tensor;
 
+/*
+TODO potentially remove having the cache as an input to a constructor? 
+Maybe every constructor shouldn't care about the cache
+*/
+
 use super::{
     AttentionBackend,
     AttentionError,
@@ -7,20 +12,31 @@ use super::{
     AttentionMask,
 };
 
-use super::kv_cache::{KvCache, KvCacheError, StandardKvCache};
+use super::kv_cache::{KvCacheError, StandardKvCache};
 
 pub struct CachedAttention {
     cache: StandardKvCache,
 }
 
 impl CachedAttention {
-    pub fn new(
+    pub fn new(cache: StandardKvCache) -> Self {
+        Self { cache }
+    }
+
+    pub fn cache(&self) -> &StandardKvCache {
+        &self.cache
+    }
+
+    pub fn cache_mut(&mut self) -> &mut StandardKvCache {
+        &mut self.cache
+    }
+
+    pub fn with_capacity_defaults(
         key_dim: usize,
         value_dim: usize,
     ) -> Result<Self, KvCacheError> {
-        Ok(Self {
-            cache: StandardKvCache::new(key_dim, value_dim)?,
-        })
+        let cache = StandardKvCache::new(key_dim, value_dim)?;
+        Ok(Self::new(cache))
     }
 }
 
@@ -42,12 +58,16 @@ impl AttentionBackend for CachedAttention {
 
         let seq_q = q_shape[0];
         let d_k = q_shape[1];
+        let seq_new_k = k_shape[0];
         let d_v = v_shape[1];
 
-        if d_k == 0
+        if seq_q == 0
+            || d_k == 0
             || d_v == 0
             || k_shape[1] != d_k
-            || k_shape[0] != v_shape[0]
+            || v_shape[0] != seq_new_k
+            || self.cache.key_dim() != d_k
+            || self.cache.value_dim() != d_v
         {
             return Err(AttentionError::InvalidShape);
         }
@@ -57,78 +77,48 @@ impl AttentionBackend for CachedAttention {
 
         let seq_k = self.cache.seq_len();
 
-        if seq_q > seq_k {
+        if seq_k == 0 || seq_q > seq_k {
             return Err(AttentionError::InvalidShape);
         }
 
-        let causal_offset = seq_k - seq_q;
+        // Copy the populated cache data into tensors for the current
+        // Tensor-based attention operations.
+        let keys = Tensor::new(
+            self.cache.keys_data().to_vec(),
+            vec![seq_k, d_k],
+        )?;
+
+        let values = Tensor::new(
+            self.cache.values_data().to_vec(),
+            vec![seq_k, d_v],
+        )?;
+
+        // Scores = QK^T / sqrt(d_k)
+        let keys_transposed = keys.transpose()?;
+        let scores = input.q.matmul(&keys_transposed)?;
         let scale = 1.0 / (d_k as f32).sqrt();
-        let mut output = Tensor::zeros(vec![seq_q, d_v])?;
+        let mut scores = scores.scale(scale)?;
 
-        for i in 0..seq_q {
-            let visible_keys = match input.mask {
-                AttentionMask::Causal => causal_offset + i + 1,
-                AttentionMask::None => seq_k,
-            };
+        // The new queries correspond to the final seq_q positions.
+        let causal_offset = seq_k - seq_q;
 
-            let mut scores = Vec::with_capacity(visible_keys);
-            let mut max_score = f32::NEG_INFINITY;
+        if input.mask == AttentionMask::Causal {
+            for i in 0..seq_q {
+                let last_visible_key = causal_offset + i;
 
-            // QK^T, reading keys directly from cache storage.
-            for j in 0..visible_keys {
-                let mut dot = 0.0_f32;
-
-                for d in 0..d_k {
-                    let q = input.q
-                        .get(&[i, d])
+                for j in (last_visible_key + 1)..seq_k {
+                    scores
+                        .set(&[i, j], f32::NEG_INFINITY)
                         .ok_or(AttentionError::InvalidTensorIndex)?;
-
-                    let k = self.cache
-                        .key_at(j, d)
-                        .ok_or(AttentionError::InvalidTensorIndex)?;
-
-                    dot += q * k;
                 }
-
-                let score = dot * scale;
-
-                if !score.is_finite() {
-                    return Err(AttentionError::InvalidShape);
-                }
-
-                max_score = max_score.max(score);
-                scores.push(score);
-            }
-
-            // Numerically stable softmax.
-            let mut denominator = 0.0_f32;
-
-            for score in &mut scores {
-                *score = (*score - max_score).exp();
-                denominator += *score;
-            }
-
-            if !denominator.is_finite() || denominator == 0.0 {
-                return Err(AttentionError::InvalidShape);
-            }
-
-            // softmax(QK^T)V, reading values directly from cache.
-            for d in 0..d_v {
-                let mut result = 0.0_f32;
-
-                for (j, &score) in scores.iter().enumerate() {
-                    let v = self.cache
-                        .value_at(j, d)
-                        .ok_or(AttentionError::InvalidTensorIndex)?;
-
-                    result += (score / denominator) * v;
-                }
-
-                output
-                    .set(&[i, d], result)
-                    .ok_or(AttentionError::InvalidTensorIndex)?;
             }
         }
+
+        // Probabilities = softmax(scores)
+        let probabilities = scores.softmax_last_dim()?;
+
+        // Output = probabilities * cached V
+        let output = probabilities.matmul(&values)?;
 
         Ok(output)
     }

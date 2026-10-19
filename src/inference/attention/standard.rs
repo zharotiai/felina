@@ -1,3 +1,4 @@
+
 use crate::tensor::Tensor;
 
 use super::{
@@ -8,28 +9,6 @@ use super::{
 };
 
 pub struct StandardAttention;
-
-impl StandardAttention {
-    fn read(
-        tensor: &Tensor,
-        indices: &[usize],
-    ) -> Result<f32, AttentionError> {
-        tensor
-            .get(indices)
-            .ok_or(AttentionError::InvalidTensorIndex)
-    }
-
-    fn write(
-        tensor: &mut Tensor,
-        indices: &[usize],
-        value: f32,
-    ) -> Result<(), AttentionError> {
-        tensor
-            .set(indices, value)
-            .map(|_| ())
-            .ok_or(AttentionError::InvalidTensorIndex)
-    }
-}
 
 impl AttentionBackend for StandardAttention {
     fn forward(
@@ -51,118 +30,43 @@ impl AttentionBackend for StandardAttention {
         let seq_q = q_shape[0];
         let d_k = q_shape[1];
         let seq_k = k_shape[0];
-        let d_k_actual = k_shape[1];
-        let seq_v = v_shape[0];
         let d_v = v_shape[1];
 
-        if d_k == 0
-            || d_k != d_k_actual
-            || seq_k != seq_v
+        if seq_q == 0
+            || seq_k == 0
+            || d_k == 0
+            || d_v == 0
+            || k_shape[1] != d_k
+            || v_shape[0] != seq_k
         {
             return Err(AttentionError::InvalidShape);
         }
 
         // Scores = QK^T / sqrt(d_k)
-        let mut scores = Tensor::zeros(vec![seq_q, seq_k])?;
+        let k_transposed = input.k.transpose()?;
+        let scores = input.q.matmul(&k_transposed)?;
         let scale = 1.0 / (d_k as f32).sqrt();
+        let mut scores = scores.scale(scale)?;
 
-        for i in 0..seq_q {
-            for j in 0..seq_k {
-                let mut dot_product = 0.0;
+       let causal_offset = seq_k - seq_q;
 
-                for d in 0..d_k {
-                    let q_value = Self::read(input.q, &[i, d])?;
-                    let k_value = Self::read(input.k, &[j, d])?;
-
-                    dot_product += q_value * k_value;
-                }
-
-                Self::write(
-                    &mut scores,
-                    &[i, j],
-                    dot_product * scale,
-                )?;
-            }
-        }
-
-        // Apply causal masking.
-        // Assumes query and key positions share the same starting index.
         if input.mask == AttentionMask::Causal {
             for i in 0..seq_q {
-                for j in (i + 1)..seq_k {
-                    Self::write(
-                        &mut scores,
-                        &[i, j],
-                        f32::NEG_INFINITY,
-                    )?;
+                let last_visible_key = causal_offset + i;
+
+                for j in (last_visible_key + 1)..seq_k {
+                    scores
+                        .set(&[i, j], f32::NEG_INFINITY)
+                        .ok_or(AttentionError::InvalidTensorIndex)?;
                 }
             }
         }
 
-        // Softmax each row, subtracting the maximum for numerical stability.
-        let mut probabilities = Tensor::zeros(vec![seq_q, seq_k])?;
+        // Probabilities = softmax(scores)
+        let probabilities = scores.softmax_last_dim()?;
 
-        for i in 0..seq_q {
-            let mut max_score = f32::NEG_INFINITY;
-
-            for j in 0..seq_k {
-                let score = Self::read(&scores, &[i, j])?;
-                max_score = max_score.max(score);
-            }
-
-            if !max_score.is_finite() {
-                return Err(AttentionError::InvalidShape);
-            }
-
-            let mut denominator = 0.0;
-
-            for j in 0..seq_k {
-                let score = Self::read(&scores, &[i, j])?;
-                let probability = (score - max_score).exp();
-
-                Self::write(
-                    &mut probabilities,
-                    &[i, j],
-                    probability,
-                )?;
-
-                denominator += probability;
-            }
-
-            if !denominator.is_finite() || denominator == 0.0 {
-                return Err(AttentionError::InvalidShape);
-            }
-
-            for j in 0..seq_k {
-                let probability =
-                    Self::read(&probabilities, &[i, j])? / denominator;
-
-                Self::write(
-                    &mut probabilities,
-                    &[i, j],
-                    probability,
-                )?;
-            }
-        }
-
-        // Output = softmax(scores) V
-        let mut output = Tensor::zeros(vec![seq_q, d_v])?;
-
-        for i in 0..seq_q {
-            for d in 0..d_v {
-                let mut value = 0.0;
-
-                for j in 0..seq_k {
-                    let probability =
-                        Self::read(&probabilities, &[i, j])?;
-                    let v_value = Self::read(input.v, &[j, d])?;
-
-                    value += probability * v_value;
-                }
-
-                Self::write(&mut output, &[i, d], value)?;
-            }
-        }
+        // Output = probabilities * V
+        let output = probabilities.matmul(input.v)?;
 
         Ok(output)
     }

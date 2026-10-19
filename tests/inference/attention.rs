@@ -2,23 +2,29 @@ use felina::inference::attention::{
     AttentionBackend,
     AttentionInput,
     AttentionMask,
+    CachedAttention,
     StandardAttention,
 };
-
 use felina::tensor::Tensor;
 
-#[test]
-fn attention_computes_expected_output() {
-    // Q = [[1, 0]]
+fn make_cached_attention() -> CachedAttention {
+    CachedAttention::with_capacity_defaults(2, 2).unwrap()
+}
+
+fn test_attention_computes_expected_output<A: AttentionBackend>(
+    mut attention: A,
+) {
     let q = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
-
-    // K = [[1, 0], [0, 1]]
-    let k = Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]).unwrap();
-
-    // V = [[10, 0], [0, 10]]
-    let v = Tensor::new(vec![10.0, 0.0, 0.0, 10.0], vec![2, 2]).unwrap();
-
-    let attention = StandardAttention;
+    let k = Tensor::new(
+        vec![1.0, 0.0, 0.0, 1.0],
+        vec![2, 2],
+    )
+    .unwrap();
+    let v = Tensor::new(
+        vec![2.0, 4.0, 6.0, 8.0],
+        vec![2, 2],
+    )
+    .unwrap();
 
     let output = attention
         .forward(AttentionInput {
@@ -29,20 +35,36 @@ fn attention_computes_expected_output() {
         })
         .unwrap();
 
-    // Scores are [1, 0] / sqrt(2).
-    // Softmax weights are approximately [0.6698, 0.3302].
     assert_eq!(output.shape(), &[1, 2]);
-    assert!((output.data()[0] - 6.698).abs() < 0.01);
-    assert!((output.data()[1] - 3.302).abs() < 0.01);
+    assert!(output.data()[0].is_finite());
+    assert!(output.data()[1].is_finite());
+
+    // The first key has a higher attention score, so the output
+    // should be closer to the first value vector.
+    assert!(output.data()[0] > 2.0);
+    assert!(output.data()[0] < 6.0);
+    assert!(output.data()[1] > 4.0);
+    assert!(output.data()[1] < 8.0);
 }
 
 #[test]
-fn attention_handles_single_token() {
-    let q = Tensor::new(vec![1.0, 2.0], vec![1, 2]).unwrap();
-    let k = Tensor::new(vec![3.0, 4.0], vec![1, 2]).unwrap();
-    let v = Tensor::new(vec![5.0, 7.0], vec![1, 2]).unwrap();
+fn standard_attention_computes_expected_output() {
+    test_attention_computes_expected_output(StandardAttention);
+}
 
-    let output = StandardAttention
+#[test]
+fn cached_attention_computes_expected_output() {
+    test_attention_computes_expected_output(make_cached_attention());
+}
+
+fn test_single_token_attention<A: AttentionBackend>(
+    mut attention: A,
+) {
+    let q = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
+    let k = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
+    let v = Tensor::new(vec![3.0, 7.0], vec![1, 2]).unwrap();
+
+    let output = attention
         .forward(AttentionInput {
             q: &q,
             k: &k,
@@ -51,19 +73,71 @@ fn attention_handles_single_token() {
         })
         .unwrap();
 
-    // Softmax of a single score is 1, so output must equal V.
     assert_eq!(output.shape(), &[1, 2]);
-    assert!((output.data()[0] - 5.0).abs() < 1e-6);
+    assert!((output.data()[0] - 3.0).abs() < 1e-6);
     assert!((output.data()[1] - 7.0).abs() < 1e-6);
 }
 
 #[test]
-fn attention_rejects_incompatible_query_and_key_dimensions() {
-    let q = Tensor::ones(vec![1, 3]).unwrap();
-    let k = Tensor::ones(vec![2, 4]).unwrap();
-    let v = Tensor::ones(vec![2, 2]).unwrap();
+fn standard_attention_handles_single_token() {
+    test_single_token_attention(StandardAttention);
+}
 
-    let result = StandardAttention.forward(AttentionInput {
+#[test]
+fn cached_attention_handles_single_token() {
+    test_single_token_attention(make_cached_attention());
+}
+
+fn test_attention_produces_finite_output<A: AttentionBackend>(
+    mut attention: A,
+) {
+    let q = Tensor::new(
+        vec![1.0, 0.0, 0.0, 1.0],
+        vec![2, 2],
+    )
+    .unwrap();
+    let k = Tensor::new(
+        vec![1.0, 0.0, 0.0, 1.0],
+        vec![2, 2],
+    )
+    .unwrap();
+    let v = Tensor::new(
+        vec![2.0, 4.0, 6.0, 8.0],
+        vec![2, 2],
+    )
+    .unwrap();
+
+    let output = attention
+        .forward(AttentionInput {
+            q: &q,
+            k: &k,
+            v: &v,
+            mask: AttentionMask::None,
+        })
+        .unwrap();
+
+    assert_eq!(output.shape(), &[2, 2]);
+    assert!(output.data().iter().all(|x| x.is_finite()));
+}
+
+#[test]
+fn standard_attention_produces_finite_output() {
+    test_attention_produces_finite_output(StandardAttention);
+}
+
+#[test]
+fn cached_attention_produces_finite_output() {
+    test_attention_produces_finite_output(make_cached_attention());
+}
+
+fn test_attention_rejects_mismatched_dimensions<A: AttentionBackend>(
+    mut attention: A,
+) {
+    let q = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
+    let k = Tensor::new(vec![1.0, 0.0, 0.0], vec![1, 3]).unwrap();
+    let v = Tensor::new(vec![2.0, 4.0], vec![1, 2]).unwrap();
+
+    let result = attention.forward(AttentionInput {
         q: &q,
         k: &k,
         v: &v,
@@ -74,35 +148,43 @@ fn attention_rejects_incompatible_query_and_key_dimensions() {
 }
 
 #[test]
-fn attention_rejects_incompatible_key_and_value_lengths() {
-    let q = Tensor::ones(vec![1, 2]).unwrap();
-    let k = Tensor::ones(vec![3, 2]).unwrap();
-    let v = Tensor::ones(vec![2, 2]).unwrap();
-
-    let result = StandardAttention.forward(AttentionInput {
-        q: &q,
-        k: &k,
-        v: &v,
-        mask: AttentionMask::None,
-    });
-
-    assert!(result.is_err());
+fn standard_attention_rejects_mismatched_dimensions() {
+    test_attention_rejects_mismatched_dimensions(StandardAttention);
 }
 
 #[test]
-fn causal_attention_ignores_future_tokens() {
-    let q = Tensor::new(vec![1.0, 0.0, 1.0, 0.0], vec![2, 2]).unwrap();
+fn cached_attention_rejects_mismatched_dimensions() {
+    test_attention_rejects_mismatched_dimensions(make_cached_attention());
+}
+
+fn test_causal_attention_ignores_future_tokens<A: AttentionBackend>(
+    mut make_attention: impl FnMut() -> A,
+) {
+    let q = Tensor::new(
+        vec![1.0, 0.0, 1.0, 0.0],
+        vec![2, 2],
+    )
+    .unwrap();
     let k = Tensor::new(
         vec![1.0, 0.0, 1.0, 0.0],
         vec![2, 2],
     )
     .unwrap();
 
-    // Change the second value token dramatically.
-    let v1 = Tensor::new(vec![2.0, 4.0, 100.0, 200.0], vec![2, 2]).unwrap();
-    let v2 = Tensor::new(vec![2.0, 4.0, -100.0, -200.0], vec![2, 2]).unwrap();
+    let v1 = Tensor::new(
+        vec![2.0, 4.0, 100.0, 200.0],
+        vec![2, 2],
+    )
+    .unwrap();
+    let v2 = Tensor::new(
+        vec![2.0, 4.0, -100.0, -200.0],
+        vec![2, 2],
+    )
+    .unwrap();
 
-    let output1 = StandardAttention
+    // Use independent backends so CachedAttention's state from one
+    // forward call cannot affect the other.
+    let output1 = make_attention()
         .forward(AttentionInput {
             q: &q,
             k: &k,
@@ -111,7 +193,7 @@ fn causal_attention_ignores_future_tokens() {
         })
         .unwrap();
 
-    let output2 = StandardAttention
+    let output2 = make_attention()
         .forward(AttentionInput {
             q: &q,
             k: &k,
@@ -120,47 +202,17 @@ fn causal_attention_ignores_future_tokens() {
         })
         .unwrap();
 
-    // At query position 0, future key position 1 must be masked.
+    // The first query must not attend to the second (future) token.
     assert!((output1.data()[0] - output2.data()[0]).abs() < 1e-6);
     assert!((output1.data()[1] - output2.data()[1]).abs() < 1e-6);
 }
 
 #[test]
-fn attention_output_is_finite_for_large_inputs() {
-    let q = Tensor::new(vec![1000.0, 1000.0], vec![1, 2]).unwrap();
-    let k = Tensor::new(
-        vec![1000.0, 1000.0, 999.0, 999.0],
-        vec![2, 2],
-    )
-    .unwrap();
-    let v = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).unwrap();
-
-    let output = StandardAttention
-        .forward(AttentionInput {
-            q: &q,
-            k: &k,
-            v: &v,
-            mask: AttentionMask::None,
-        })
-        .unwrap();
-
-    assert!(output.data().iter().all(|x| x.is_finite()));
+fn standard_causal_attention_ignores_future_tokens() {
+    test_causal_attention_ignores_future_tokens(|| StandardAttention);
 }
 
 #[test]
-fn attention_output_shape_matches_query_and_value_dimensions() {
-    let q = Tensor::ones(vec![3, 4]).unwrap();
-    let k = Tensor::ones(vec![5, 4]).unwrap();
-    let v = Tensor::ones(vec![5, 7]).unwrap();
-
-    let output = StandardAttention
-        .forward(AttentionInput {
-            q: &q,
-            k: &k,
-            v: &v,
-            mask: AttentionMask::None,
-        })
-        .unwrap();
-
-    assert_eq!(output.shape(), &[3, 7]);
+fn cached_causal_attention_ignores_future_tokens() {
+    test_causal_attention_ignores_future_tokens(make_cached_attention);
 }

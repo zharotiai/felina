@@ -1,13 +1,12 @@
-
 use crate::tensor::{Tensor, TensorError};
 use std::fmt;
 
 /*
-Standard implemenation of attention with a KV cache
+Standard implementation of attention with a KV cache.
 */
 
 // Initial number of token slots allocated by the standard cache.
-pub const INITIAL_KV_CACHE_CAPACITY: usize = 128;
+pub const INITIAL_KV_CACHE_CAPACITY: usize = 512;
 
 #[derive(Debug)]
 pub enum KvCacheError {
@@ -48,35 +47,6 @@ impl std::error::Error for KvCacheError {
     }
 }
 
-
-
-/// Common interface for standard and paged KV caches.
-pub trait KvCache {
-    // Number of tokens currently stored.
-    fn seq_len(&self) -> usize;
-
-    // Whether the cache contains no tokens.
-    fn is_empty(&self) -> bool {
-        self.seq_len() == 0
-    }
-
-    // Append new key and value rows.
-    fn append(
-        &mut self,
-        keys: &Tensor,
-        values: &Tensor,
-    ) -> Result<(), KvCacheError>;
-
-    // Return populated keys in sequence order.
-    fn keys(&self) -> Result<Tensor, KvCacheError>;
-
-    // Return populated values in sequence order.
-    fn values(&self) -> Result<Tensor, KvCacheError>;
-
-    // key_at and value_at
-}
-
-
 /// A contiguous KV cache with dynamically growing capacity.
 pub struct StandardKvCache {
     keys: Tensor,
@@ -112,6 +82,36 @@ impl StandardKvCache {
         })
     }
 
+    pub fn seq_len(&self) -> usize {
+        self.seq_len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.seq_len == 0
+    }
+
+    pub fn key_dim(&self) -> usize {
+        self.key_dim
+    }
+
+    pub fn value_dim(&self) -> usize {
+        self.value_dim
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Returns the populated key data as a borrowed contiguous slice.
+    pub fn keys_data(&self) -> &[f32] {
+        &self.keys.data()[..self.seq_len * self.key_dim]
+    }
+
+    /// Returns the populated value data as a borrowed contiguous slice.
+    pub fn values_data(&self) -> &[f32] {
+        &self.values.data()[..self.seq_len * self.value_dim]
+    }
+
     fn ensure_capacity(
         &mut self,
         required: usize,
@@ -124,8 +124,7 @@ impl StandardKvCache {
             .capacity
             .checked_mul(2)
             .filter(|&capacity| capacity >= required)
-            .or(Some(required))
-            .ok_or(KvCacheError::CapacityOverflow)?;
+            .unwrap_or(required);
 
         let mut new_keys =
             Tensor::zeros(vec![new_capacity, self.key_dim])?;
@@ -161,29 +160,7 @@ impl StandardKvCache {
         Ok(())
     }
 
-    pub fn key_at(&self, token: usize, dim: usize) -> Option<f32> {
-        if token >= self.seq_len || dim >= self.key_dim {
-            return None;
-        }
-
-        self.keys.get(&[token, dim])
-    }
-
-    pub fn value_at(&self, token: usize, dim: usize) -> Option<f32> {
-        if token >= self.seq_len || dim >= self.value_dim {
-            return None;
-        }
-
-        self.values.get(&[token, dim])
-    }
-}
-
-impl KvCache for StandardKvCache {
-    fn seq_len(&self) -> usize {
-        self.seq_len
-    }
-
-    fn append(
+    pub fn append(
         &mut self,
         keys: &Tensor,
         values: &Tensor,
@@ -232,42 +209,19 @@ impl KvCache for StandardKvCache {
         Ok(())
     }
 
-    fn keys(&self) -> Result<Tensor, KvCacheError> {
-        let mut result =
-            Tensor::zeros(vec![self.seq_len, self.key_dim])?;
-
-        for token in 0..self.seq_len {
-            for d in 0..self.key_dim {
-                let value = self.keys
-                    .get(&[token, d])
-                    .ok_or(KvCacheError::InvalidShape)?;
-
-                result
-                    .set(&[token, d], value)
-                    .ok_or(KvCacheError::InvalidShape)?;
-            }
+    pub fn key_at(&self, token: usize, dim: usize) -> Option<f32> {
+        if token >= self.seq_len || dim >= self.key_dim {
+            return None;
         }
 
-        Ok(result)
+        self.keys.get(&[token, dim])
     }
 
-    fn values(&self) -> Result<Tensor, KvCacheError> {
-        let mut result =
-            Tensor::zeros(vec![self.seq_len, self.value_dim])?;
-
-        for token in 0..self.seq_len {
-            for d in 0..self.value_dim {
-                let value = self.values
-                    .get(&[token, d])
-                    .ok_or(KvCacheError::InvalidShape)?;
-
-                result
-                    .set(&[token, d], value)
-                    .ok_or(KvCacheError::InvalidShape)?;
-            }
+    pub fn value_at(&self, token: usize, dim: usize) -> Option<f32> {
+        if token >= self.seq_len || dim >= self.value_dim {
+            return None;
         }
 
-        Ok(result)
+        self.values.get(&[token, dim])
     }
-
 }

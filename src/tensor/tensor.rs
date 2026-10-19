@@ -6,6 +6,8 @@ use super::TILE_SIZE;
 // Tensor<T: Multiply>
 
 // TODO: Could have types.rs and all the iplmementations in separated files
+// like implementations in ops.rs
+
 
 
 
