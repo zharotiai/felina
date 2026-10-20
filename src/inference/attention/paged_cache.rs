@@ -1,3 +1,4 @@
+
 use std::error::Error;
 use std::fmt;
 
@@ -22,14 +23,60 @@ impl fmt::Display for PagedKvCacheError {
 
 impl Error for PagedKvCacheError {}
 
+/// A fixed-size block containing rows of key or value vectors.
+///
+/// The data is stored contiguously in a single heap allocation.
+/// Each row contains `feature_dim` floating-point elements.
+struct KvBlock {
+    data: Vec<f32>,
+}
+
+impl KvBlock {
+    /// Creates a block containing `elements` zero-initialised elements.
+    fn new(elements: usize) -> Result<Self, PagedKvCacheError> {
+        let mut data = Vec::new();
+
+        data.try_reserve_exact(elements)
+            .map_err(|_| PagedKvCacheError::AllocationFailed)?;
+
+        data.resize(elements, 0.0);
+
+        Ok(Self { data })
+    }
+
+    /// Returns a row from the block.
+    fn row(&self, row_offset: usize, feature_dim: usize) -> Option<&[f32]> {
+        let start = row_offset.checked_mul(feature_dim)?;
+        let end = start.checked_add(feature_dim)?;
+
+        self.data.get(start..end)
+    }
+
+    /// Copies a row into the block.
+    ///
+    /// The caller must ensure that the row offset and feature dimension
+    /// describe a valid range within this block.
+    fn write_row(
+        &mut self,
+        row_offset: usize,
+        feature_dim: usize,
+        values: &[f32],
+    ) {
+        let start = row_offset * feature_dim;
+        let end = start + feature_dim;
+
+        self.data[start..end].copy_from_slice(values);
+    }
+}
+
 /// Stores KV entries in fixed-size blocks rather than one contiguous allocation.
 pub struct PagedKvCache {
     key_dim: usize,
     value_dim: usize,
     block_size: usize,
     seq_len: usize,
-    key_blocks: Vec<Vec<f32>>,
-    value_blocks: Vec<Vec<f32>>,
+    key_blocks: Vec<KvBlock>,
+    value_blocks: Vec<KvBlock>,
 }
 
 impl PagedKvCache {
@@ -45,6 +92,7 @@ impl PagedKvCache {
         block_size
             .checked_mul(key_dim)
             .ok_or(PagedKvCacheError::ShapeOverflow)?;
+
         block_size
             .checked_mul(value_dim)
             .ok_or(PagedKvCacheError::ShapeOverflow)?;
@@ -95,20 +143,22 @@ impl PagedKvCache {
         ))
     }
 
+    /// Returns the key vector for a cached token.
     pub fn key_at(&self, token_index: usize) -> Option<&[f32]> {
         let (block_index, row_offset) = self.block_location(token_index)?;
-        let start = row_offset.checked_mul(self.key_dim)?;
-        let end = start.checked_add(self.key_dim)?;
 
-        self.key_blocks.get(block_index)?.get(start..end)
+        self.key_blocks
+            .get(block_index)?
+            .row(row_offset, self.key_dim)
     }
 
+    /// Returns the value vector for a cached token.
     pub fn value_at(&self, token_index: usize) -> Option<&[f32]> {
         let (block_index, row_offset) = self.block_location(token_index)?;
-        let start = row_offset.checked_mul(self.value_dim)?;
-        let end = start.checked_add(self.value_dim)?;
 
-        self.value_blocks.get(block_index)?.get(start..end)
+        self.value_blocks
+            .get(block_index)?
+            .row(row_offset, self.value_dim)
     }
 
     /// Appends new key/value rows to the cache.
@@ -132,6 +182,7 @@ impl PagedKvCache {
         }
 
         let rows = key_shape[0];
+
         if rows == 0 {
             return Ok(());
         }
@@ -148,7 +199,6 @@ impl PagedKvCache {
 
         let additional_blocks = required_blocks - self.key_blocks.len();
 
-        // Allocate all new blocks before modifying the logical cache contents.
         let key_block_elements = self
             .block_size
             .checked_mul(self.key_dim)
@@ -159,6 +209,7 @@ impl PagedKvCache {
             .checked_mul(self.value_dim)
             .ok_or(PagedKvCacheError::ShapeOverflow)?;
 
+        // Allocate all new blocks before modifying the logical cache contents.
         let mut new_key_blocks = Vec::new();
         let mut new_value_blocks = Vec::new();
 
@@ -171,8 +222,8 @@ impl PagedKvCache {
             .map_err(|_| PagedKvCacheError::AllocationFailed)?;
 
         for _ in 0..additional_blocks {
-            new_key_blocks.push(Self::allocate_block(key_block_elements)?);
-            new_value_blocks.push(Self::allocate_block(value_block_elements)?);
+            new_key_blocks.push(KvBlock::new(key_block_elements)?);
+            new_value_blocks.push(KvBlock::new(value_block_elements)?);
         }
 
         self.key_blocks
@@ -197,34 +248,21 @@ impl PagedKvCache {
             let key_start = row * self.key_dim;
             let value_start = row * self.value_dim;
 
-            let key_block_start = row_offset * self.key_dim;
-            let value_block_start = row_offset * self.value_dim;
+            self.key_blocks[block_index].write_row(
+                row_offset,
+                self.key_dim,
+                &key_data[key_start..key_start + self.key_dim],
+            );
 
-            self.key_blocks[block_index]
-                [key_block_start..key_block_start + self.key_dim]
-                .copy_from_slice(
-                    &key_data[key_start..key_start + self.key_dim],
-                );
-
-            self.value_blocks[block_index]
-                [value_block_start..value_block_start + self.value_dim]
-                .copy_from_slice(
-                    &value_data[value_start..value_start + self.value_dim],
-                );
+            self.value_blocks[block_index].write_row(
+                row_offset,
+                self.value_dim,
+                &value_data[value_start..value_start + self.value_dim],
+            );
         }
 
         self.seq_len = new_seq_len;
+
         Ok(())
-    }
-
-    fn allocate_block(elements: usize) -> Result<Vec<f32>, PagedKvCacheError> {
-        let mut block = Vec::new();
-
-        block
-            .try_reserve_exact(elements)
-            .map_err(|_| PagedKvCacheError::AllocationFailed)?;
-
-        block.resize(elements, 0.0);
-        Ok(block)
     }
 }
