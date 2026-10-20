@@ -1,6 +1,4 @@
-use criterion::{
-    criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 use felina::inference::attention::{
@@ -218,12 +216,9 @@ fn kv_cache_benefit(c: &mut Criterion) {
                 |b, _| {
                     b.iter_batched(
                         || {
-                            let mut attention = PagedAttention::with_block_size(
-                                HEAD_DIM,
-                                HEAD_DIM,
-                                block_size,
-                            )
-                            .expect("create paged KV cache");
+                            let mut attention =
+                                PagedAttention::with_block_size(HEAD_DIM, HEAD_DIM, block_size)
+                                    .expect("create paged KV cache");
                             attention
                                 .cache_mut()
                                 .append(&prefix_k, &prefix_v)

@@ -1,29 +1,17 @@
-
 use crate::tensor::Tensor;
 
-use super::{
-    AttentionBackend,
-    AttentionError,
-    AttentionInput,
-    AttentionMask,
-};
+use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
 pub struct StandardAttention;
 
 impl AttentionBackend for StandardAttention {
-    fn forward(
-        &mut self,
-        input: AttentionInput<'_>,
-    ) -> Result<Tensor, AttentionError> {
+    fn forward(&mut self, input: AttentionInput<'_>) -> Result<Tensor, AttentionError> {
         let q_shape = input.q.shape();
         let k_shape = input.k.shape();
         let v_shape = input.v.shape();
 
         // This implementation supports 2D, single-head attention.
-        if q_shape.len() != 2
-            || k_shape.len() != 2
-            || v_shape.len() != 2
-        {
+        if q_shape.len() != 2 || k_shape.len() != 2 || v_shape.len() != 2 {
             return Err(AttentionError::InvalidShape);
         }
 
@@ -48,7 +36,7 @@ impl AttentionBackend for StandardAttention {
         let scale = 1.0 / (d_k as f32).sqrt();
         let mut scores = scores.scale(scale)?;
 
-       let causal_offset = seq_k - seq_q;
+        let causal_offset = seq_k - seq_q;
 
         if input.mask == AttentionMask::Causal {
             for i in 0..seq_q {

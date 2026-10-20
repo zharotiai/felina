@@ -1,4 +1,3 @@
-
 use std::error::Error;
 use std::fmt;
 
@@ -56,12 +55,7 @@ impl KvBlock {
     ///
     /// The caller must ensure that the row offset and feature dimension
     /// describe a valid range within this block.
-    fn write_row(
-        &mut self,
-        row_offset: usize,
-        feature_dim: usize,
-        values: &[f32],
-    ) {
+    fn write_row(&mut self, row_offset: usize, feature_dim: usize, values: &[f32]) {
         let start = row_offset * feature_dim;
         let end = start + feature_dim;
 
@@ -137,10 +131,7 @@ impl PagedKvCache {
             return None;
         }
 
-        Some((
-            token_index / self.block_size,
-            token_index % self.block_size,
-        ))
+        Some((token_index / self.block_size, token_index % self.block_size))
     }
 
     /// Returns the key vector for a cached token.
@@ -164,11 +155,7 @@ impl PagedKvCache {
     /// Appends new key/value rows to the cache.
     ///
     /// Allocates additional blocks only when the current blocks are full.
-    pub fn append(
-        &mut self,
-        keys: &Tensor,
-        values: &Tensor,
-    ) -> Result<(), PagedKvCacheError> {
+    pub fn append(&mut self, keys: &Tensor, values: &Tensor) -> Result<(), PagedKvCacheError> {
         let key_shape = keys.shape();
         let value_shape = values.shape();
 
@@ -264,5 +251,48 @@ impl PagedKvCache {
         self.seq_len = new_seq_len;
 
         Ok(())
+    }
+
+
+    /// Returns the valid key data for a block, without copying.
+    ///
+    /// The returned slice contains `valid_tokens * key_dim` elements.
+    /// The final block may be only partially filled.
+    pub fn key_block(&self, block_index: usize) -> Option<&[f32]> {
+        let valid_tokens = self.valid_tokens_in_block(block_index)?;
+        let elements = valid_tokens.checked_mul(self.key_dim)?;
+
+        self.key_blocks
+            .get(block_index)?
+            .data
+            .get(..elements)
+    }
+
+    /// Returns the valid value data for a block, without copying.
+    ///
+    /// The returned slice contains `valid_tokens * value_dim` elements.
+    /// The final block may be only partially filled.
+    pub fn value_block(&self, block_index: usize) -> Option<&[f32]> {
+        let valid_tokens = self.valid_tokens_in_block(block_index)?;
+        let elements = valid_tokens.checked_mul(self.value_dim)?;
+
+        self.value_blocks
+            .get(block_index)?
+            .data
+            .get(..elements)
+    }
+
+    /// Returns the number of valid tokens in a block.
+    ///
+    /// Returns None if the block index is invalid.
+    pub fn valid_tokens_in_block(&self, block_index: usize) -> Option<usize> {
+        if block_index >= self.num_blocks() {
+            return None;
+        }
+
+        let remaining = self.seq_len
+            .checked_sub(block_index.checked_mul(self.block_size)?)?;
+
+        Some(remaining.min(self.block_size))
     }
 }

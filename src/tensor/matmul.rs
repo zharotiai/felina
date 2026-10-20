@@ -1,17 +1,11 @@
-
-use super::{Tensor, TensorError, TILE_SIZE};
+use super::{TILE_SIZE, Tensor, TensorError};
 
 impl Tensor {
     /// Matrix multiplication using two tensors.
     ///
     /// Preserves the existing API while delegating to `matmul_slices`.
     pub fn matmul(&self, other: &Tensor) -> Result<Tensor, TensorError> {
-        Self::matmul_slices(
-            &self.data,
-            &self.shape,
-            &other.data,
-            &other.shape,
-        )
+        Self::matmul_slices(&self.data, &self.shape, &other.data, &other.shape)
     }
 
     /// Matrix multiplication over borrowed, contiguous row-major data.
@@ -98,12 +92,12 @@ impl Tensor {
 
         // Right-align batch dimensions and apply broadcasting.
         let batch_shape =
-            Self::broadcast_batch_shapes(left_batch, right_batch).ok_or_else(
-                || TensorError::MatmulShapeMismatch {
+            Self::broadcast_batch_shapes(left_batch, right_batch).ok_or_else(|| {
+                TensorError::MatmulShapeMismatch {
                     left: left_shape.to_vec(),
                     right: right_shape.to_vec(),
-                },
-            )?;
+                }
+            })?;
 
         let mut output_shape = batch_shape.clone();
         output_shape.push(m);
@@ -113,28 +107,18 @@ impl Tensor {
 
         let batch_count = Self::get_expected_num_elements(&batch_shape)?;
 
-        let left_matrix_size =
-            m.checked_mul(k).ok_or(TensorError::ShapeOverflow)?;
+        let left_matrix_size = m.checked_mul(k).ok_or(TensorError::ShapeOverflow)?;
 
-        let right_matrix_size =
-            k.checked_mul(n).ok_or(TensorError::ShapeOverflow)?;
+        let right_matrix_size = k.checked_mul(n).ok_or(TensorError::ShapeOverflow)?;
 
-        let output_matrix_size =
-            m.checked_mul(n).ok_or(TensorError::ShapeOverflow)?;
+        let output_matrix_size = m.checked_mul(n).ok_or(TensorError::ShapeOverflow)?;
 
         // Calculate each batch independently.
         for batch_idx in 0..batch_count {
-            let left_batch_idx = Self::broadcast_batch_offset(
-                batch_idx,
-                &batch_shape,
-                left_batch,
-            );
+            let left_batch_idx = Self::broadcast_batch_offset(batch_idx, &batch_shape, left_batch);
 
-            let right_batch_idx = Self::broadcast_batch_offset(
-                batch_idx,
-                &batch_shape,
-                right_batch,
-            );
+            let right_batch_idx =
+                Self::broadcast_batch_offset(batch_idx, &batch_shape, right_batch);
 
             let left_base = left_batch_idx * left_matrix_size;
             let right_base = right_batch_idx * right_matrix_size;
@@ -150,17 +134,12 @@ impl Tensor {
 
                         for row in row_start..row_end {
                             for inner in inner_start..inner_end {
-                                let a =
-                                    left_data[left_base + row * k + inner];
+                                let a = left_data[left_base + row * k + inner];
 
                                 for col in col_start..col_end {
-                                    let b = right_data[
-                                        right_base + inner * n + col
-                                    ];
+                                    let b = right_data[right_base + inner * n + col];
 
-                                    output.data[
-                                        output_base + row * n + col
-                                    ] += a * b;
+                                    output.data[output_base + row * n + col] += a * b;
                                 }
                             }
                         }
@@ -185,10 +164,7 @@ impl Tensor {
         Ok(output)
     }
 
-    fn broadcast_batch_shapes(
-        left: &[usize],
-        right: &[usize],
-    ) -> Option<Vec<usize>> {
+    fn broadcast_batch_shapes(left: &[usize], right: &[usize]) -> Option<Vec<usize>> {
         let rank = left.len().max(right.len());
         let mut result = vec![1; rank];
 
@@ -233,9 +209,7 @@ impl Tensor {
         let mut input_stride = 1;
 
         for input_axis in (0..input_batch_shape.len()).rev() {
-            let output_axis =
-                output_batch_shape.len() - input_batch_shape.len()
-                    + input_axis;
+            let output_axis = output_batch_shape.len() - input_batch_shape.len() + input_axis;
 
             let coordinate = if input_batch_shape[input_axis] == 1 {
                 0

@@ -1,6 +1,4 @@
-
 use felina::tensor::{Tensor, TensorError};
-
 
 #[test]
 fn test_add() {
@@ -116,11 +114,7 @@ fn test_softmax_vector() {
 
 #[test]
 fn test_softmax_multidimensional() {
-    let tensor = Tensor::new(
-        vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0],
-        vec![2, 3],
-    )
-    .unwrap();
+    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0], vec![2, 3]).unwrap();
 
     let result = tensor.softmax_last_dim().unwrap();
     let values = result.data();

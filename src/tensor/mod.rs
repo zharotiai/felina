@@ -1,7 +1,7 @@
-mod tensor;
-mod matmul;
 mod elementwise;
+mod matmul;
+mod tensor;
 
-pub use tensor::{Tensor, TensorError};
+pub use tensor::{Tensor, TensorError, TensorView};
 
 pub(crate) const TILE_SIZE: usize = 32;

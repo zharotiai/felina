@@ -41,8 +41,7 @@ impl std::error::Error for KvCacheError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             KvCacheError::Tensor(err) => Some(err),
-            KvCacheError::InvalidShape
-            | KvCacheError::CapacityOverflow => None,
+            KvCacheError::InvalidShape | KvCacheError::CapacityOverflow => None,
         }
     }
 }
@@ -58,23 +57,14 @@ pub struct StandardKvCache {
 }
 
 impl StandardKvCache {
-    pub fn new(
-        key_dim: usize,
-        value_dim: usize,
-    ) -> Result<Self, KvCacheError> {
+    pub fn new(key_dim: usize, value_dim: usize) -> Result<Self, KvCacheError> {
         if key_dim == 0 || value_dim == 0 {
             return Err(KvCacheError::InvalidShape);
         }
 
         Ok(Self {
-            keys: Tensor::zeros(vec![
-                INITIAL_KV_CACHE_CAPACITY,
-                key_dim,
-            ])?,
-            values: Tensor::zeros(vec![
-                INITIAL_KV_CACHE_CAPACITY,
-                value_dim,
-            ])?,
+            keys: Tensor::zeros(vec![INITIAL_KV_CACHE_CAPACITY, key_dim])?,
+            values: Tensor::zeros(vec![INITIAL_KV_CACHE_CAPACITY, value_dim])?,
             seq_len: 0,
             capacity: INITIAL_KV_CACHE_CAPACITY,
             key_dim,
@@ -112,10 +102,7 @@ impl StandardKvCache {
         &self.values.data()[..self.seq_len * self.value_dim]
     }
 
-    fn ensure_capacity(
-        &mut self,
-        required: usize,
-    ) -> Result<(), KvCacheError> {
+    fn ensure_capacity(&mut self, required: usize) -> Result<(), KvCacheError> {
         if required <= self.capacity {
             return Ok(());
         }
@@ -126,14 +113,13 @@ impl StandardKvCache {
             .filter(|&capacity| capacity >= required)
             .unwrap_or(required);
 
-        let mut new_keys =
-            Tensor::zeros(vec![new_capacity, self.key_dim])?;
-        let mut new_values =
-            Tensor::zeros(vec![new_capacity, self.value_dim])?;
+        let mut new_keys = Tensor::zeros(vec![new_capacity, self.key_dim])?;
+        let mut new_values = Tensor::zeros(vec![new_capacity, self.value_dim])?;
 
         for token in 0..self.seq_len {
             for d in 0..self.key_dim {
-                let value = self.keys
+                let value = self
+                    .keys
                     .get(&[token, d])
                     .ok_or(KvCacheError::InvalidShape)?;
 
@@ -143,7 +129,8 @@ impl StandardKvCache {
             }
 
             for d in 0..self.value_dim {
-                let value = self.values
+                let value = self
+                    .values
                     .get(&[token, d])
                     .ok_or(KvCacheError::InvalidShape)?;
 
@@ -160,11 +147,7 @@ impl StandardKvCache {
         Ok(())
     }
 
-    pub fn append(
-        &mut self,
-        keys: &Tensor,
-        values: &Tensor,
-    ) -> Result<(), KvCacheError> {
+    pub fn append(&mut self, keys: &Tensor, values: &Tensor) -> Result<(), KvCacheError> {
         let key_shape = keys.shape();
         let value_shape = values.shape();
 
@@ -177,7 +160,8 @@ impl StandardKvCache {
             return Err(KvCacheError::InvalidShape);
         }
 
-        let new_seq_len = self.seq_len
+        let new_seq_len = self
+            .seq_len
             .checked_add(key_shape[0])
             .ok_or(KvCacheError::CapacityOverflow)?;
 
@@ -185,9 +169,7 @@ impl StandardKvCache {
 
         for token in 0..key_shape[0] {
             for d in 0..self.key_dim {
-                let value = keys
-                    .get(&[token, d])
-                    .ok_or(KvCacheError::InvalidShape)?;
+                let value = keys.get(&[token, d]).ok_or(KvCacheError::InvalidShape)?;
 
                 self.keys
                     .set(&[self.seq_len + token, d], value)
@@ -195,9 +177,7 @@ impl StandardKvCache {
             }
 
             for d in 0..self.value_dim {
-                let value = values
-                    .get(&[token, d])
-                    .ok_or(KvCacheError::InvalidShape)?;
+                let value = values.get(&[token, d]).ok_or(KvCacheError::InvalidShape)?;
 
                 self.values
                     .set(&[self.seq_len + token, d], value)

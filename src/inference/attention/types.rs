@@ -1,7 +1,7 @@
-use std::fmt;
-use crate::tensor::{Tensor, TensorError};
 use super::kv_cache::KvCacheError;
 use super::paged_cache::PagedKvCacheError;
+use crate::tensor::{Tensor, TensorError};
+use std::fmt;
 
 pub struct AttentionInput<'a> {
     pub q: &'a Tensor,
@@ -11,10 +11,7 @@ pub struct AttentionInput<'a> {
 }
 
 pub trait AttentionBackend {
-    fn forward(
-        &mut self, 
-        input: AttentionInput<'_>, 
-    ) -> Result<Tensor, AttentionError>;
+    fn forward(&mut self, input: AttentionInput<'_>) -> Result<Tensor, AttentionError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,8 +45,7 @@ impl std::error::Error for AttentionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             AttentionError::Tensor(err) => Some(err),
-            AttentionError::InvalidShape
-            | AttentionError::InvalidTensorIndex => None,
+            AttentionError::InvalidShape | AttentionError::InvalidTensorIndex => None,
             AttentionError::KvCache(err) => Some(err),
             AttentionError::PagedKvCache(err) => Some(err),
         }
@@ -83,7 +79,3 @@ impl From<PagedKvCacheError> for AttentionError {
         Self::PagedKvCache(err)
     }
 }
-
-
-
-

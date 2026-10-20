@@ -1,4 +1,3 @@
-
 use super::{Tensor, TensorError};
 
 impl Tensor {

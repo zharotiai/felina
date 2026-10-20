@@ -1,16 +1,16 @@
 
 use crate::tensor::Tensor;
 
-use super::{
-    AttentionBackend, AttentionError, AttentionInput, AttentionMask,
-};
 use super::paged_cache::{PagedKvCache, PagedKvCacheError};
+use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
 // Attention over a paged KV cache.
 //
-// This is a straightforward CPU implementation. It computes attention
-// directly from the cache's blocks, without flattening the cache into
-// contiguous tensors.
+// Processes the cache blockwise without flattening or copying the cached
+// keys and values into contiguous tensors.
+//
+// Uses online softmax to combine attention contributions across blocks,
+// avoiding the need to store scores for the entire sequence.
 pub struct PagedAttention {
     cache: PagedKvCache,
 }
@@ -79,73 +79,136 @@ impl AttentionBackend for PagedAttention {
             return Err(AttentionError::InvalidShape);
         }
 
+        let block_size = self.cache.block_size();
+        let num_blocks = self.cache.num_blocks();
         let scale = 1.0 / (d_k as f32).sqrt();
         let causal_offset = seq_k - seq_q;
 
-        let mut output = Vec::with_capacity(seq_q * d_v);
+        let output_len = seq_q
+            .checked_mul(d_v)
+            .ok_or(AttentionError::InvalidShape)?;
 
+        let mut output = Vec::new();
+
+        output
+            .try_reserve_exact(output_len)
+            .map_err(|_| AttentionError::InvalidShape)?;
+
+        // Process each query independently, visiting KV blocks in order.
         for i in 0..seq_q {
-            // Compute QK^T directly from the paged cache.
-            let mut scores = Vec::with_capacity(seq_k);
+            let query_start = i * d_k;
+            let query = &input.q.data()[query_start..query_start + d_k];
 
-            for j in 0..seq_k {
-                if input.mask == AttentionMask::Causal
-                    && j > causal_offset + i
-                {
-                    scores.push(f32::NEG_INFINITY);
+            // Online softmax state:
+            // max_score: maximum score seen so far.
+            // denominator: running softmax denominator.
+            // accumulator: running weighted sum of value vectors.
+            let mut max_score = f32::NEG_INFINITY;
+            let mut denominator = 0.0_f32;
+            let mut accumulator = vec![0.0_f32; d_v];
+
+            for block_idx in 0..num_blocks {
+                let keys = self.cache
+                    .key_block(block_idx)
+                    .ok_or(AttentionError::InvalidShape)?;
+
+                let values = self.cache
+                    .value_block(block_idx)
+                    .ok_or(AttentionError::InvalidShape)?;
+
+                let valid_tokens = self.cache
+                    .valid_tokens_in_block(block_idx)
+                    .ok_or(AttentionError::InvalidShape)?;
+
+                let block_start = block_idx * block_size;
+
+                // Compute attention scores for this block.
+                let mut scores = Vec::new();
+
+                scores
+                    .try_reserve_exact(valid_tokens)
+                    .map_err(|_| AttentionError::InvalidShape)?;
+
+                let mut block_max = f32::NEG_INFINITY;
+
+                for local_j in 0..valid_tokens {
+                    let token_idx = block_start + local_j;
+
+                    // Exclude future tokens for causal attention.
+                    if input.mask == AttentionMask::Causal
+                        && token_idx > causal_offset + i
+                    {
+                        scores.push(f32::NEG_INFINITY);
+                        continue;
+                    }
+
+                    let key_start = local_j * d_k;
+                    let key = &keys[key_start..key_start + d_k];
+
+                    let mut dot = 0.0_f32;
+
+                    for d in 0..d_k {
+                        dot += query[d] * key[d];
+                    }
+
+                    let score = dot * scale;
+
+                    block_max = block_max.max(score);
+                    scores.push(score);
+                }
+
+                // A fully masked block contributes nothing.
+                if block_max == f32::NEG_INFINITY {
                     continue;
                 }
 
-                let key = self.cache.key_at(j)
-                    .ok_or(AttentionError::InvalidShape)?;
+                // Update the running maximum and rescale the accumulated
+                // denominator and output to the new maximum.
+                let new_max = max_score.max(block_max);
 
-                let mut dot = 0.0_f32;
+                let old_scale = if denominator == 0.0 {
+                    0.0
+                } else {
+                    (max_score - new_max).exp()
+                };
 
-                for d in 0..d_k {
-                    dot += input.q.data()[i * d_k + d] * key[d];
+                denominator *= old_scale;
+
+                for value in &mut accumulator {
+                    *value *= old_scale;
                 }
 
-                scores.push(dot * scale);
+                // Incorporate this block into the online softmax.
+                for (local_j, &score) in scores.iter().enumerate() {
+                    if score == f32::NEG_INFINITY {
+                        continue;
+                    }
+
+                    let weight = (score - new_max).exp();
+
+                    denominator += weight;
+
+                    let value_start = local_j * d_v;
+                    let value = &values[value_start..value_start + d_v];
+
+                    for d in 0..d_v {
+                        accumulator[d] += weight * value[d];
+                    }
+                }
+
+                max_score = new_max;
             }
-
-            // Numerically stable softmax.
-            let max_score = scores
-                .iter()
-                .copied()
-                .fold(f32::NEG_INFINITY, f32::max);
-
-            let mut exp_scores: Vec<f32> = scores
-                .iter()
-                .map(|&score| (score - max_score).exp())
-                .collect();
-
-            let denominator: f32 = exp_scores.iter().sum();
 
             if denominator == 0.0 || !denominator.is_finite() {
                 return Err(AttentionError::InvalidShape);
             }
 
-            for weight in &mut exp_scores {
-                *weight /= denominator;
+            // Normalize the accumulated weighted sum.
+            for value in &mut accumulator {
+                *value /= denominator;
             }
 
-            // Compute the weighted sum of V directly from the blocks.
-            let mut row_output = vec![0.0_f32; d_v];
-
-            for (j, &weight) in exp_scores.iter().enumerate() {
-                if weight == 0.0 {
-                    continue;
-                }
-
-                let value = self.cache.value_at(j)
-                    .ok_or(AttentionError::InvalidShape)?;
-
-                for d in 0..d_v {
-                    row_output[d] += weight * value[d];
-                }
-            }
-
-            output.extend(row_output);
+            output.extend_from_slice(&accumulator);
         }
 
         Ok(Tensor::new(output, vec![seq_q, d_v])?)

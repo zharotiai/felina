@@ -1,9 +1,5 @@
 use felina::inference::attention::{
-    AttentionBackend,
-    AttentionInput,
-    AttentionMask,
-    CachedAttention,
-    StandardAttention,
+    AttentionBackend, AttentionInput, AttentionMask, CachedAttention, StandardAttention,
 };
 use felina::tensor::Tensor;
 
@@ -11,20 +7,10 @@ fn make_cached_attention() -> CachedAttention {
     CachedAttention::with_capacity_defaults(2, 2).unwrap()
 }
 
-fn test_attention_computes_expected_output<A: AttentionBackend>(
-    mut attention: A,
-) {
+fn test_attention_computes_expected_output<A: AttentionBackend>(mut attention: A) {
     let q = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
-    let k = Tensor::new(
-        vec![1.0, 0.0, 0.0, 1.0],
-        vec![2, 2],
-    )
-    .unwrap();
-    let v = Tensor::new(
-        vec![2.0, 4.0, 6.0, 8.0],
-        vec![2, 2],
-    )
-    .unwrap();
+    let k = Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]).unwrap();
+    let v = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![2, 2]).unwrap();
 
     let output = attention
         .forward(AttentionInput {
@@ -57,9 +43,7 @@ fn cached_attention_computes_expected_output() {
     test_attention_computes_expected_output(make_cached_attention());
 }
 
-fn test_single_token_attention<A: AttentionBackend>(
-    mut attention: A,
-) {
+fn test_single_token_attention<A: AttentionBackend>(mut attention: A) {
     let q = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
     let k = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
     let v = Tensor::new(vec![3.0, 7.0], vec![1, 2]).unwrap();
@@ -88,24 +72,10 @@ fn cached_attention_handles_single_token() {
     test_single_token_attention(make_cached_attention());
 }
 
-fn test_attention_produces_finite_output<A: AttentionBackend>(
-    mut attention: A,
-) {
-    let q = Tensor::new(
-        vec![1.0, 0.0, 0.0, 1.0],
-        vec![2, 2],
-    )
-    .unwrap();
-    let k = Tensor::new(
-        vec![1.0, 0.0, 0.0, 1.0],
-        vec![2, 2],
-    )
-    .unwrap();
-    let v = Tensor::new(
-        vec![2.0, 4.0, 6.0, 8.0],
-        vec![2, 2],
-    )
-    .unwrap();
+fn test_attention_produces_finite_output<A: AttentionBackend>(mut attention: A) {
+    let q = Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]).unwrap();
+    let k = Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]).unwrap();
+    let v = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![2, 2]).unwrap();
 
     let output = attention
         .forward(AttentionInput {
@@ -130,9 +100,7 @@ fn cached_attention_produces_finite_output() {
     test_attention_produces_finite_output(make_cached_attention());
 }
 
-fn test_attention_rejects_mismatched_dimensions<A: AttentionBackend>(
-    mut attention: A,
-) {
+fn test_attention_rejects_mismatched_dimensions<A: AttentionBackend>(mut attention: A) {
     let q = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
     let k = Tensor::new(vec![1.0, 0.0, 0.0], vec![1, 3]).unwrap();
     let v = Tensor::new(vec![2.0, 4.0], vec![1, 2]).unwrap();
@@ -160,27 +128,11 @@ fn cached_attention_rejects_mismatched_dimensions() {
 fn test_causal_attention_ignores_future_tokens<A: AttentionBackend>(
     mut make_attention: impl FnMut() -> A,
 ) {
-    let q = Tensor::new(
-        vec![1.0, 0.0, 1.0, 0.0],
-        vec![2, 2],
-    )
-    .unwrap();
-    let k = Tensor::new(
-        vec![1.0, 0.0, 1.0, 0.0],
-        vec![2, 2],
-    )
-    .unwrap();
+    let q = Tensor::new(vec![1.0, 0.0, 1.0, 0.0], vec![2, 2]).unwrap();
+    let k = Tensor::new(vec![1.0, 0.0, 1.0, 0.0], vec![2, 2]).unwrap();
 
-    let v1 = Tensor::new(
-        vec![2.0, 4.0, 100.0, 200.0],
-        vec![2, 2],
-    )
-    .unwrap();
-    let v2 = Tensor::new(
-        vec![2.0, 4.0, -100.0, -200.0],
-        vec![2, 2],
-    )
-    .unwrap();
+    let v1 = Tensor::new(vec![2.0, 4.0, 100.0, 200.0], vec![2, 2]).unwrap();
+    let v2 = Tensor::new(vec![2.0, 4.0, -100.0, -200.0], vec![2, 2]).unwrap();
 
     // Use independent backends so CachedAttention's state from one
     // forward call cannot affect the other.

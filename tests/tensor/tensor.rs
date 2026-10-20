@@ -155,8 +155,7 @@ fn accessors_do_not_mutate_tensor() {
 
 #[test]
 fn get_reads_values_at_multidimensional_indices() {
-    let tensor =
-        Tensor::new(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0], vec![2, 3]).unwrap();
+    let tensor = Tensor::new(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0], vec![2, 3]).unwrap();
 
     assert_eq!(tensor.get(&[0, 0]), Some(10.0));
     assert_eq!(tensor.get(&[0, 2]), Some(30.0));
@@ -170,14 +169,13 @@ fn get_returns_none_for_invalid_indices() {
 
     assert_eq!(tensor.get(&[2, 0]), None); // Out of bounds.
     assert_eq!(tensor.get(&[0, 2]), None); // Out of bounds.
-    assert_eq!(tensor.get(&[0]), None);    // Wrong rank.
+    assert_eq!(tensor.get(&[0]), None); // Wrong rank.
     assert_eq!(tensor.get(&[0, 0, 0]), None); // Wrong rank.
 }
 
 #[test]
 fn set_updates_only_the_selected_element() {
-    let mut tensor =
-        Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).unwrap();
+    let mut tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).unwrap();
 
     tensor.set(&[1, 0], 99.0);
 
@@ -189,8 +187,7 @@ fn set_updates_only_the_selected_element() {
 
 #[test]
 fn clone_copies_shape_and_data_independently() {
-    let mut original =
-        Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).unwrap();
+    let mut original = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]).unwrap();
     let cloned = original.clone();
 
     original.set(&[0, 0], 99.0);
@@ -217,8 +214,7 @@ fn equality_compares_both_shape_and_data() {
 
 #[test]
 fn transpose_reorders_non_square_matrix() {
-    let tensor =
-        Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
 
     let transposed = tensor.transpose().unwrap();
 
@@ -279,7 +275,10 @@ fn large_tensor_transpose_preserves_element_count_and_samples() {
     assert_eq!(transposed.shape(), &[cols, rows]);
     assert_eq!(transposed.num_elements(), rows * cols);
     assert_eq!(transposed.get(&[0, 0]), Some(0.0));
-    assert_eq!(transposed.get(&[cols - 1, rows - 1]), Some((rows * cols - 1) as f32));
+    assert_eq!(
+        transposed.get(&[cols - 1, rows - 1]),
+        Some((rows * cols - 1) as f32)
+    );
     assert_eq!(transposed.get(&[17, 23]), Some((23 * cols + 17) as f32));
 }
 
@@ -296,7 +295,11 @@ fn tensor_errors_have_stable_display_messages() {
         "Failed to allocate memory for tensor"
     );
     assert_eq!(
-        TensorError::ShapeMismatch { expected: 6, actual: 4 }.to_string(),
+        TensorError::ShapeMismatch {
+            expected: 6,
+            actual: 4
+        }
+        .to_string(),
         "Data length mismatch: expected 6 elements from shape, got 4"
     );
 }
@@ -305,4 +308,57 @@ fn tensor_errors_have_stable_display_messages() {
 fn tensor_error_implements_standard_error() {
     let error = TensorError::ShapeOverflow;
     let _: &dyn Error = &error;
+}
+
+#[test]
+fn view_does_not_copy_data() {
+    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+
+    let view = tensor.view().unwrap();
+
+    assert_eq!(view.shape(), &[2, 3]);
+    assert_eq!(view.strides(), &[3, 1]);
+    assert!(std::ptr::eq(
+        view.backing_data().as_ptr(),
+        tensor.data().as_ptr(),
+    ));
+}
+
+#[test]
+fn transposed_view_does_not_copy_data() {
+    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+
+    let view = tensor.view().unwrap();
+    let transposed = view.transpose().unwrap();
+
+    assert_eq!(transposed.shape(), &[3, 2]);
+    assert_eq!(transposed.strides(), &[1, 3]);
+    assert_eq!(transposed.get(&[0, 1]), Some(4.0));
+    assert_eq!(transposed.get(&[2, 1]), Some(6.0));
+    assert!(transposed.as_slice().is_none());
+}
+
+#[test]
+fn sliced_view_reads_correct_elements() {
+    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+
+    let view = tensor.view().unwrap();
+    let sliced = view.slice(1, 1, 3).unwrap();
+
+    assert_eq!(sliced.shape(), &[2, 2]);
+    assert_eq!(sliced.get(&[0, 0]), Some(2.0));
+    assert_eq!(sliced.get(&[0, 1]), Some(3.0));
+    assert_eq!(sliced.get(&[1, 0]), Some(5.0));
+    assert_eq!(sliced.get(&[1, 1]), Some(6.0));
+}
+
+#[test]
+fn materializing_transposed_view_copies_in_logical_order() {
+    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
+
+    let transposed = tensor.view().unwrap().transpose().unwrap();
+    let owned = transposed.to_tensor().unwrap();
+
+    assert_eq!(owned.shape(), &[3, 2]);
+    assert_eq!(owned.data(), &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
 }
