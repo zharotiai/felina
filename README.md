@@ -130,3 +130,6 @@ cargo bench --bench attention
 ## Current scope and future goals
 
 Felina is a learning and development project, and its APIs and performance are still evolving. Longer-term goals include multi-head attention, a fuller inference engine, neural network backpropagation, and GPU execution and optimization.
+
+<img width="650" height="457" alt="image" src="https://github.com/user-attachments/assets/3f83ad5a-ccd4-4fd1-ba47-aaeee80fe80e" />
+
