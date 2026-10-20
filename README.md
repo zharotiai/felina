@@ -1,6 +1,6 @@
 # Felina
 
-Felina is an experimental Rust project exploring the building blocks of an ML library. It currently provides an `f32` tensor type and a small inference module focused on single-head attention and KV caching.
+Felina is an experimental Rust project exploring the building blocks of an ML library from scratch. It currently provides an `f32` tensor type and a small inference module focused on single-head attention, KV caching and PagedAttention. I named it after the Breaking Bad finale.
 
 ## What’s implemented
 
@@ -65,7 +65,9 @@ Ok(())
 
 During autoregressive decoding, each new token adds a key and value vector to the history. Recomputing projections for the whole prefix at every step repeats work; a KV cache stores earlier keys and values so each step can add only the new rows.
 
-`CachedAttention` keeps K and V in contiguous buffers. `PagedAttention` stores them in fixed-size blocks allocated as needed. It attends over those blocks directly, without flattening the cache into a new contiguous tensor. Its online softmax combines each block’s contribution as it is read, so it does not need to retain scores for the full sequence. Choose a block size when creating the backend:
+`CachedAttention` keeps K and V in contiguous buffers. `PagedAttention` stores them in fixed-size blocks allocated as needed and attends to each block directly, without flattening the cache into a new contiguous tensor.
+
+Paged attention uses online softmax to combine attention across blocks in one pass. For each query, it tracks the largest score seen so far, a running softmax denominator, and a weighted sum of value vectors. When a block introduces a larger score, it rescales the accumulated denominator and value sum before adding that block’s contribution. This keeps the result numerically stable while avoiding a full-sequence score or probability tensor; only the current block’s scores and the running accumulators are needed. Choose a block size when creating the backend:
 
 ```rust
 use felina::inference::attention::{
