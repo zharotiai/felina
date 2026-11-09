@@ -1,3 +1,5 @@
+// src/inference/attention/mod.rs
+
 mod cached;
 mod kv_cache;
 mod paged;

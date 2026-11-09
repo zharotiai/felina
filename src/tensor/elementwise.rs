@@ -1,3 +1,5 @@
+// src/tensor/elementwise.rs
+
 use super::{Tensor, TensorError};
 
 impl Tensor {

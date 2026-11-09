@@ -1,3 +1,4 @@
+// src/inference/attention/paged.rs
 
 use crate::tensor::Tensor;
 
@@ -39,18 +40,12 @@ impl PagedAttention {
 }
 
 impl AttentionBackend for PagedAttention {
-    fn forward(
-        &mut self,
-        input: AttentionInput<'_>,
-    ) -> Result<Tensor, AttentionError> {
+    fn forward(&mut self, input: AttentionInput<'_>) -> Result<Tensor, AttentionError> {
         let q_shape = input.q.shape();
         let k_shape = input.k.shape();
         let v_shape = input.v.shape();
 
-        if q_shape.len() != 2
-            || k_shape.len() != 2
-            || v_shape.len() != 2
-        {
+        if q_shape.len() != 2 || k_shape.len() != 2 || v_shape.len() != 2 {
             return Err(AttentionError::InvalidShape);
         }
 
@@ -84,9 +79,7 @@ impl AttentionBackend for PagedAttention {
         let scale = 1.0 / (d_k as f32).sqrt();
         let causal_offset = seq_k - seq_q;
 
-        let output_len = seq_q
-            .checked_mul(d_v)
-            .ok_or(AttentionError::InvalidShape)?;
+        let output_len = seq_q.checked_mul(d_v).ok_or(AttentionError::InvalidShape)?;
 
         let mut output = Vec::new();
 
@@ -108,15 +101,18 @@ impl AttentionBackend for PagedAttention {
             let mut accumulator = vec![0.0_f32; d_v];
 
             for block_idx in 0..num_blocks {
-                let keys = self.cache
+                let keys = self
+                    .cache
                     .key_block(block_idx)
                     .ok_or(AttentionError::InvalidShape)?;
 
-                let values = self.cache
+                let values = self
+                    .cache
                     .value_block(block_idx)
                     .ok_or(AttentionError::InvalidShape)?;
 
-                let valid_tokens = self.cache
+                let valid_tokens = self
+                    .cache
                     .valid_tokens_in_block(block_idx)
                     .ok_or(AttentionError::InvalidShape)?;
 
@@ -135,9 +131,7 @@ impl AttentionBackend for PagedAttention {
                     let token_idx = block_start + local_j;
 
                     // Exclude future tokens for causal attention.
-                    if input.mask == AttentionMask::Causal
-                        && token_idx > causal_offset + i
-                    {
+                    if input.mask == AttentionMask::Causal && token_idx > causal_offset + i {
                         scores.push(f32::NEG_INFINITY);
                         continue;
                     }

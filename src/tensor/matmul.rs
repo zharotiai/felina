@@ -1,3 +1,5 @@
+// src/tensor/matmul.rs
+
 use super::{TILE_SIZE, Tensor, TensorError};
 
 impl Tensor {

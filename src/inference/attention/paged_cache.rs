@@ -1,3 +1,5 @@
+// src/inference/attention/paged_cache.rs
+
 use std::error::Error;
 use std::fmt;
 
@@ -253,7 +255,6 @@ impl PagedKvCache {
         Ok(())
     }
 
-
     /// Returns the valid key data for a block, without copying.
     ///
     /// The returned slice contains `valid_tokens * key_dim` elements.
@@ -262,10 +263,7 @@ impl PagedKvCache {
         let valid_tokens = self.valid_tokens_in_block(block_index)?;
         let elements = valid_tokens.checked_mul(self.key_dim)?;
 
-        self.key_blocks
-            .get(block_index)?
-            .data
-            .get(..elements)
+        self.key_blocks.get(block_index)?.data.get(..elements)
     }
 
     /// Returns the valid value data for a block, without copying.
@@ -276,10 +274,7 @@ impl PagedKvCache {
         let valid_tokens = self.valid_tokens_in_block(block_index)?;
         let elements = valid_tokens.checked_mul(self.value_dim)?;
 
-        self.value_blocks
-            .get(block_index)?
-            .data
-            .get(..elements)
+        self.value_blocks.get(block_index)?.data.get(..elements)
     }
 
     /// Returns the number of valid tokens in a block.
@@ -290,7 +285,8 @@ impl PagedKvCache {
             return None;
         }
 
-        let remaining = self.seq_len
+        let remaining = self
+            .seq_len
             .checked_sub(block_index.checked_mul(self.block_size)?)?;
 
         Some(remaining.min(self.block_size))
