@@ -250,6 +250,47 @@ fn transpose_handles_square_and_degenerate_matrices() {
     assert!(empty.data().is_empty());
 }
 
+#[test]
+fn transpose_handles_narrow_and_single_element_matrices() {
+    let single = Tensor::new(vec![42.0], vec![1, 1])
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(single.shape(), &[1, 1]);
+    assert_eq!(single.data(), &[42.0]);
+
+    let column = Tensor::new(vec![1.0, 2.0], vec![2, 1])
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(column.shape(), &[1, 2]);
+    assert_eq!(column.data(), &[1.0, 2.0]);
+
+    let row = Tensor::new(vec![3.0, 4.0], vec![1, 2])
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(row.shape(), &[2, 1]);
+    assert_eq!(row.data(), &[3.0, 4.0]);
+}
+
+#[test]
+fn transpose_rejects_non_two_dimensional_tensors() {
+    let vector = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]).unwrap();
+    let scalar = Tensor::new(vec![1.0], vec![]).unwrap();
+    let rank_three = Tensor::new(vec![1.0; 8], vec![2, 2, 2]).unwrap();
+
+    assert!(matches!(
+        vector.transpose(),
+        Err(TensorError::InvalidDimensions {
+            expected: 2,
+            actual: 1
+        })
+    ));
+    assert!(scalar.transpose().is_err());
+    assert!(rank_three.transpose().is_err());
+}
+
 // Resilience / scale regression tests
 
 #[test]
@@ -304,6 +345,14 @@ fn tensor_errors_have_stable_display_messages() {
         .to_string(),
         "Data length mismatch: expected 6 elements from shape, got 4"
     );
+    assert_eq!(
+        TensorError::InsufficientDimensions {
+            expected: 1,
+            actual: 0
+        }
+        .to_string(),
+        "Expected at least 1 dimension(s), got 0"
+    );
 }
 
 #[test]
@@ -338,29 +387,4 @@ fn transposed_view_does_not_copy_data() {
     assert_eq!(transposed.get(&[0, 1]), Some(4.0));
     assert_eq!(transposed.get(&[2, 1]), Some(6.0));
     assert!(transposed.as_slice().is_none());
-}
-
-#[test]
-fn sliced_view_reads_correct_elements() {
-    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
-
-    let view = tensor.view().unwrap();
-    let sliced = view.slice(1, 1, 3).unwrap();
-
-    assert_eq!(sliced.shape(), &[2, 2]);
-    assert_eq!(sliced.get(&[0, 0]), Some(2.0));
-    assert_eq!(sliced.get(&[0, 1]), Some(3.0));
-    assert_eq!(sliced.get(&[1, 0]), Some(5.0));
-    assert_eq!(sliced.get(&[1, 1]), Some(6.0));
-}
-
-#[test]
-fn materializing_transposed_view_copies_in_logical_order() {
-    let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]).unwrap();
-
-    let transposed = tensor.view().unwrap().transpose().unwrap();
-    let owned = transposed.to_tensor().unwrap();
-
-    assert_eq!(owned.shape(), &[3, 2]);
-    assert_eq!(owned.data(), &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
 }

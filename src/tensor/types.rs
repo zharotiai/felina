@@ -1,12 +1,8 @@
 // src/tensor/types.rs
 
-use std::fmt;
-
 #[derive(Clone, PartialEq, Debug)]
 pub struct Tensor {
     pub(super) shape: Vec<usize>,
-
-    // Contiguous storage for cache locality.
     pub(super) data: Vec<f32>,
 }
 
@@ -14,11 +10,23 @@ pub struct Tensor {
 //
 // The view borrows the original allocation. Transposing or slicing a view
 // changes its metadata without copying the underlying elements.
+// Potentially for future operations where viewing is more efficient than copying,
+// but not in use as of now.
 #[derive(Clone, Debug)]
 pub struct TensorView<'a> {
     pub(super) data: &'a [f32],
     pub(super) shape: Vec<usize>,
+
+    // the data may be stored in memory with respect to a different shape
+    // so the view need to know how to traverse the Tensor
+
+    // For example if we have a 5x2 matrix, and the original stride is [2, 1]
+    // but if we have a 2x5 view of it, then we still need to remember how to
+    // traverse it with the [2, 1] stride, rather than inferring the new stride
+    // which would be [5, 1]
     pub(super) strides: Vec<usize>,
+
+    // where the view starts
     pub(super) offset: usize,
 }
 
@@ -28,45 +36,7 @@ pub enum TensorError {
     AllocationFailed,
     ShapeMismatch { expected: usize, actual: usize },
     InvalidDimensions { expected: usize, actual: usize },
+    InsufficientDimensions { expected: usize, actual: usize },
     MatmulShapeMismatch { left: Vec<usize>, right: Vec<usize> },
     ElementwiseShapeMismatch { left: Vec<usize>, right: Vec<usize> },
 }
-
-impl fmt::Display for TensorError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TensorError::ShapeOverflow => {
-                write!(f, "Tensor shape exceeds the maximum representable size")
-            }
-            TensorError::AllocationFailed => {
-                write!(f, "Failed to allocate memory for tensor")
-            }
-            TensorError::ShapeMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "Data length mismatch: expected {} elements from shape, got {}",
-                    expected, actual
-                )
-            }
-            TensorError::InvalidDimensions { expected, actual } => {
-                write!(
-                    f,
-                    "Expected a tensor with {} dimensions, got {}",
-                    expected, actual
-                )
-            }
-            TensorError::MatmulShapeMismatch { left, right } => {
-                write!(
-                    f,
-                    "Cannot multiply tensors with shapes {left:?} and {right:?}"
-                )
-            }
-            TensorError::ElementwiseShapeMismatch { left, right } => write!(
-                f,
-                "Cannot perform elementwise operation on tensors with shapes {left:?} and {right:?}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for TensorError {}

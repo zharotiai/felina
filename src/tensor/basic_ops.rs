@@ -24,7 +24,10 @@ impl Tensor {
 
         let mut data = Vec::new();
         data.try_reserve_exact(n)
+            // maybe the user tries to allocate an absurdly large Tensor
+            // handle that c case
             .map_err(|_| TensorError::AllocationFailed)?;
+
         data.resize(n, value);
 
         Ok(Self { shape, data })
@@ -33,6 +36,8 @@ impl Tensor {
     pub(super) fn get_expected_num_elements(shape: &[usize]) -> Result<usize, TensorError> {
         shape
             .iter()
+            // maybe the multiplication could overflow
+            // handle that just in case
             .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
             .ok_or(TensorError::ShapeOverflow)
     }
@@ -75,14 +80,15 @@ impl Tensor {
             return None;
         }
 
-        let mut offset = 0;
+        let mut offset: usize = 0;
 
         for (&index, &dim) in indices.iter().zip(&self.shape) {
             if index >= dim {
                 return None;
             }
 
-            offset = offset * dim + index;
+            // offset = offset * dim + index;
+            offset = offset.checked_mul(dim)?.checked_add(index)?;
         }
 
         Some(offset)
@@ -94,6 +100,7 @@ impl Tensor {
         Ok(())
     }
 
+    // Copy-based transpose
     pub fn transpose(&self) -> Result<Self, TensorError> {
         if self.shape.len() != 2 {
             return Err(TensorError::InvalidDimensions {
@@ -105,11 +112,11 @@ impl Tensor {
         let rows = self.shape[0];
         let cols = self.shape[1];
 
-        let mut data = Vec::new();
-        data.try_reserve_exact(self.data.len())
-            .map_err(|_| TensorError::AllocationFailed)?;
-        data.resize(self.data.len(), 0.0);
+        let mut transposed = Self::zeros(vec![cols, rows])?;
 
+        // A more safe approach might be to fill this with None as a sentinel
+        // then input the values, and at the end we can see whether we missed anything
+        // Although this might be overkill, the tests will test the correctness of this
         for row_start in (0..rows).step_by(TILE_SIZE) {
             for col_start in (0..cols).step_by(TILE_SIZE) {
                 let row_end = (row_start + TILE_SIZE).min(rows);
@@ -117,13 +124,13 @@ impl Tensor {
 
                 for row in row_start..row_end {
                     for col in col_start..col_end {
-                        data[col * rows + row] = self.data[row * cols + col];
+                        transposed.data[col * rows + row] = self.data[row * cols + col];
                     }
                 }
             }
         }
 
-        Self::new(data, vec![cols, rows])
+        Ok(transposed)
     }
 
     pub fn view(&self) -> Result<TensorView<'_>, TensorError> {
@@ -152,7 +159,9 @@ impl<'a> TensorView<'a> {
         })
     }
 
-    fn contiguous_strides(shape: &[usize]) -> Result<Vec<usize>, TensorError> {
+    pub(super) fn contiguous_strides(shape: &[usize]) -> Result<Vec<usize>, TensorError> {
+        // If we have a A x B x C X D tensor
+        // the contiguous strides are [B * C * D, C * D, D, 1] for respective dimensions
         let mut strides = vec![0; shape.len()];
         let mut stride = 1usize;
 
@@ -184,6 +193,8 @@ impl<'a> TensorView<'a> {
     }
 
     pub fn is_contiguous(&self) -> bool {
+        // checks whether the view is the same as the one in memory
+        // by validating the stride against the shape
         let mut expected_stride = 1usize;
 
         for i in (0..self.shape.len()).rev() {
@@ -217,6 +228,7 @@ impl<'a> TensorView<'a> {
         let mut physical_offset = self.offset;
 
         for ((&index, &dim), &stride) in indices.iter().zip(&self.shape).zip(&self.strides) {
+            // ((0, dim_0), stride_0)
             if index >= dim {
                 return None;
             }
@@ -243,58 +255,6 @@ impl<'a> TensorView<'a> {
         })
     }
 
-    pub fn slice(&self, axis: usize, start: usize, end: usize) -> Option<Self> {
-        if axis >= self.shape.len() || start > end || end > self.shape[axis] {
-            return None;
-        }
-
-        let offset_delta = start.checked_mul(self.strides[axis])?;
-        let offset = self.offset.checked_add(offset_delta)?;
-
-        let mut shape = self.shape.clone();
-        shape[axis] = end - start;
-
-        Some(Self {
-            data: self.data,
-            shape,
-            strides: self.strides.clone(),
-            offset,
-        })
-    }
-
-    pub fn to_tensor(&self) -> Result<Tensor, TensorError> {
-        let n = self.num_elements();
-
-        let mut data = Vec::new();
-        data.try_reserve_exact(n)
-            .map_err(|_| TensorError::AllocationFailed)?;
-
-        for linear_index in 0..n {
-            let mut remainder = linear_index;
-            let mut physical_offset = self.offset;
-
-            for i in (0..self.shape.len()).rev() {
-                let dim = self.shape[i];
-                let coordinate = remainder % dim;
-                remainder /= dim;
-
-                physical_offset = physical_offset
-                    .checked_add(
-                        coordinate
-                            .checked_mul(self.strides[i])
-                            .ok_or(TensorError::ShapeOverflow)?,
-                    )
-                    .ok_or(TensorError::ShapeOverflow)?;
-            }
-
-            data.push(
-                *self
-                    .data
-                    .get(physical_offset)
-                    .ok_or(TensorError::ShapeOverflow)?,
-            );
-        }
-
-        Tensor::new(data, self.shape.clone())
-    }
+    // TODO: Potentially to_tensor and slice()
+    // Slice would return a new view of the tensor from a different offset
 }

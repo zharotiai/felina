@@ -161,6 +161,9 @@ fn test_softmax_scalar_rejected() {
 
     assert!(matches!(
         tensor.softmax_last_dim(),
-        Err(TensorError::InvalidDimensions { .. })
+        Err(TensorError::InsufficientDimensions {
+            expected: 1,
+            actual: 0
+        })
     ));
 }

@@ -1,6 +1,7 @@
 // src/inference/attention/mod.rs
 
 mod cached;
+mod error;
 mod kv_cache;
 mod paged;
 mod paged_cache;

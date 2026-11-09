@@ -40,11 +40,11 @@ impl Tensor {
 
     // Applies numerically stable softmax along the last dimension (rows for a 2d matrix)
     //
-    // For a tensor with shape [d0, d1, ..., dn], softmax is
-    // applied independently to each group of dn elements.
+    // For a tensor with shape [d_0, d_1, ..., d_n], softmax is
+    // applied independently to each group of d_n elements.
     pub fn softmax_last_dim(&self) -> Result<Tensor, TensorError> {
         let Some(&last_dim) = self.shape.last() else {
-            return Err(TensorError::InvalidDimensions {
+            return Err(TensorError::InsufficientDimensions {
                 expected: 1,
                 actual: 0,
             });
@@ -60,10 +60,13 @@ impl Tensor {
         }
 
         // Each chunk represents one row along the last dimension.
+        // Iterate over slices, each containing the last last_dim elements each
         for row in self.data.chunks(last_dim) {
             // Subtract the maximum to improve numerical stability.
+            // Walks through the row one at a time, doesn't copy the full row
             let max_value = row.iter().copied().reduce(f32::max).unwrap();
 
+            // where we start the next row
             let start = data.len();
 
             // Compute exp(x - max) for each element.
@@ -101,6 +104,7 @@ impl Tensor {
         data.try_reserve_exact(self.data.len())
             .map_err(|_| TensorError::AllocationFailed)?;
 
+        // try_reserve_exact removes any potential resizing overhead
         for (&a, &b) in self.data.iter().zip(&other.data) {
             data.push(operation(a, b));
         }

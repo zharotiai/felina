@@ -2,6 +2,7 @@
 
 mod basic_ops;
 mod elementwise;
+mod error;
 mod matmul;
 mod types;
 
