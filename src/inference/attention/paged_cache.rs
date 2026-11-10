@@ -15,11 +15,13 @@ struct KvBlock {
 impl KvBlock {
     // Creates a block containing zero-initialised elements.
     fn new(row_count: usize, feature_dim: usize) -> Result<Self, PagedKvCacheError> {
+        // Block dimensions are caller-controlled and determine the allocation size.
         let elements = row_count
             .checked_mul(feature_dim)
             .ok_or(PagedKvCacheError::ShapeOverflow)?;
         let mut data = Vec::new();
 
+        // Return allocation failure instead of allowing resize to panic.
         data.try_reserve_exact(elements)
             .map_err(|_| PagedKvCacheError::AllocationFailed)?;
 
@@ -38,8 +40,8 @@ impl KvBlock {
             return None;
         }
 
-        let start = row_offset.checked_mul(self.feature_dim)?;
-        let end = start.checked_add(self.feature_dim)?;
+        let start = row_offset * self.feature_dim;
+        let end = start + self.feature_dim;
 
         self.data.get(start..end)
     }
@@ -50,8 +52,8 @@ impl KvBlock {
             return None;
         }
 
-        let start = row_offset.checked_mul(self.feature_dim)?;
-        let end = start.checked_add(self.feature_dim)?;
+        let start = row_offset * self.feature_dim;
+        let end = start + self.feature_dim;
 
         self.data.get_mut(start..end)?.copy_from_slice(values);
         Some(())
@@ -77,14 +79,6 @@ impl PagedKvCache {
         if key_dim == 0 || value_dim == 0 || block_size == 0 {
             return Err(PagedKvCacheError::InvalidShape);
         }
-
-        block_size
-            .checked_mul(key_dim)
-            .ok_or(PagedKvCacheError::ShapeOverflow)?;
-
-        block_size
-            .checked_mul(value_dim)
-            .ok_or(PagedKvCacheError::ShapeOverflow)?;
 
         Ok(Self {
             key_dim,
@@ -167,11 +161,13 @@ impl PagedKvCache {
             return Ok(());
         }
 
+        // Appends are caller-controlled, so sequence length must not wrap.
         let new_seq_len = self
             .seq_len
             .checked_add(rows)
             .ok_or(PagedKvCacheError::ShapeOverflow)?;
 
+        // Ceiling division uses an addition that can overflow for extreme lengths.
         let required_blocks = new_seq_len
             .checked_add(self.block_size - 1)
             .ok_or(PagedKvCacheError::ShapeOverflow)?
@@ -183,6 +179,7 @@ impl PagedKvCache {
         let mut new_key_blocks = Vec::new();
         let mut new_value_blocks = Vec::new();
 
+        // Reserve before mutating the cache so allocation failure leaves it unchanged.
         new_key_blocks
             .try_reserve_exact(additional_blocks)
             .map_err(|_| PagedKvCacheError::AllocationFailed)?;
@@ -233,7 +230,7 @@ impl PagedKvCache {
 
     pub fn key_block(&self, block_index: usize) -> Option<&[f32]> {
         let valid_tokens = self.valid_tokens_in_block(block_index)?;
-        let elements = valid_tokens.checked_mul(self.key_dim)?;
+        let elements = valid_tokens * self.key_dim;
 
         self.key_blocks.get(block_index)?.data.get(..elements)
     }
@@ -241,25 +238,35 @@ impl PagedKvCache {
     // Returns the valid value data for a block, without copying.
 
     // The returned slice contains `valid_tokens * value_dim` elements.
-    / The final block may be only partially filled.
+    // The final block may be only partially filled, so only returns the valid elements
     pub fn value_block(&self, block_index: usize) -> Option<&[f32]> {
         let valid_tokens = self.valid_tokens_in_block(block_index)?;
-        let elements = valid_tokens.checked_mul(self.value_dim)?;
+        let elements = valid_tokens * self.value_dim;
 
         self.value_blocks.get(block_index)?.data.get(..elements)
     }
 
-    /// Returns the number of valid tokens in a block.
-    ///
-    /// Returns None if the block index is invalid.
+    // Returns the valid key/value data and token range for a block.
+    pub fn block(&self, block_index: usize) -> Option<(&[f32], &[f32], usize, usize)> {
+        let valid_tokens = self.valid_tokens_in_block(block_index)?;
+        let token_start = block_index * self.block_size;
+
+        Some((
+            self.key_block(block_index)?,
+            self.value_block(block_index)?,
+            valid_tokens,
+            token_start,
+        ))
+    }
+
+    // Returns the number of valid tokens in a block.
+    // Returns None if the block index is invalid.
     pub fn valid_tokens_in_block(&self, block_index: usize) -> Option<usize> {
         if block_index >= self.num_blocks() {
             return None;
         }
 
-        let remaining = self
-            .seq_len
-            .checked_sub(block_index.checked_mul(self.block_size)?)?;
+        let remaining = self.seq_len - block_index * self.block_size;
 
         Some(remaining.min(self.block_size))
     }

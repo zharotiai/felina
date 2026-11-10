@@ -7,10 +7,10 @@ use super::paged_cache::PagedKvCache;
 use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
 // Attention over a paged KV cache.
-//
+
 // Processes the cache blockwise without flattening or copying the cached
 // keys and values into contiguous tensors.
-//
+
 // Uses online softmax to combine attention contributions across blocks,
 // avoiding the need to store scores for the entire sequence.
 pub struct PagedAttention {
@@ -42,26 +42,23 @@ impl PagedAttention {
 
 impl AttentionBackend for PagedAttention {
     fn forward(&mut self, input: AttentionInput<'_>) -> Result<Tensor, AttentionError> {
-        let q_shape = input.q.shape();
-        let k_shape = input.k.shape();
-        let v_shape = input.v.shape();
-
-        if q_shape.len() != 2 || k_shape.len() != 2 || v_shape.len() != 2 {
+        let [query_sequence_length, key_vector_dimension]: &[usize] = input.q.shape() else {
             return Err(AttentionError::InvalidShape);
-        }
+        };
 
-        let seq_q = q_shape[0];
-        let d_k = q_shape[1];
-        let seq_new_k = k_shape[0];
-        let d_v = v_shape[1];
+        let [input_key_sequence_length, key_dimension]: &[usize] = input.k.shape() else {
+            return Err(AttentionError::InvalidShape);
+        };
 
-        if seq_q == 0
-            || d_k == 0
-            || d_v == 0
-            || k_shape[1] != d_k
-            || v_shape[0] != seq_new_k
-            || self.cache.key_dim() != d_k
-            || self.cache.value_dim() != d_v
+        let [input_value_sequence_length, value_vector_dimension]: &[usize] = input.v.shape()
+        else {
+            return Err(AttentionError::InvalidShape);
+        };
+
+        if key_vector_dimension != key_dimension
+            || input_key_sequence_length != input_value_sequence_length
+            || *key_vector_dimension != self.cache.key_dim()
+            || *value_vector_dimension != self.cache.value_dim()
         {
             return Err(AttentionError::InvalidShape);
         }
@@ -69,29 +66,32 @@ impl AttentionBackend for PagedAttention {
         // Append the new K/V rows to the paged cache.
         self.cache.append(input.k.data(), input.v.data())?;
 
-        let seq_k = self.cache.seq_len();
+        let key_sequence_length = self.cache.seq_len();
 
-        if seq_q > seq_k {
+        if *query_sequence_length > key_sequence_length {
             return Err(AttentionError::InvalidShape);
         }
 
-        let block_size = self.cache.block_size();
         let num_blocks = self.cache.num_blocks();
-        let scale = 1.0 / (d_k as f32).sqrt();
-        let causal_offset = seq_k - seq_q;
+        let scale = 1.0 / (*key_vector_dimension as f32).sqrt();
+        let causal_offset = key_sequence_length - *query_sequence_length;
 
-        let output_len = seq_q.checked_mul(d_v).ok_or(AttentionError::InvalidShape)?;
+        // The output allocation is derived from caller-provided tensor dimensions.
+        let output_len = query_sequence_length
+            .checked_mul(*value_vector_dimension)
+            .ok_or(AttentionError::InvalidShape)?;
 
         let mut output = Vec::new();
 
+        // Preserve the attention error contract if the output cannot be allocated.
         output
             .try_reserve_exact(output_len)
             .map_err(|_| AttentionError::InvalidShape)?;
 
         // Process each query independently, visiting KV blocks in order.
-        for i in 0..seq_q {
-            let query_start = i * d_k;
-            let query = &input.q.data()[query_start..query_start + d_k];
+        for i in 0..*query_sequence_length {
+            let query_start = i * *key_vector_dimension;
+            let query = &input.q.data()[query_start..(query_start + *key_vector_dimension)];
 
             // Online softmax state:
             // max_score: maximum score seen so far.
@@ -99,29 +99,20 @@ impl AttentionBackend for PagedAttention {
             // accumulator: running weighted sum of value vectors.
             let mut max_score = f32::NEG_INFINITY;
             let mut denominator = 0.0_f32;
-            let mut accumulator = vec![0.0_f32; d_v];
+            let mut accumulator = vec![0.0_f32; *value_vector_dimension];
 
+            // for each block
             for block_idx in 0..num_blocks {
-                let keys = self
+                let (keys, values, valid_tokens, block_start) = self
                     .cache
-                    .key_block(block_idx)
+                    .block(block_idx)
                     .ok_or(AttentionError::InvalidShape)?;
-
-                let values = self
-                    .cache
-                    .value_block(block_idx)
-                    .ok_or(AttentionError::InvalidShape)?;
-
-                let valid_tokens = self
-                    .cache
-                    .valid_tokens_in_block(block_idx)
-                    .ok_or(AttentionError::InvalidShape)?;
-
-                let block_start = block_idx * block_size;
 
                 // Compute attention scores for this block.
                 let mut scores = Vec::new();
 
+                // Scores are temporary, but allocation failure must still be reported through
+                // the fallible attention API.
                 scores
                     .try_reserve_exact(valid_tokens)
                     .map_err(|_| AttentionError::InvalidShape)?;
@@ -132,17 +123,21 @@ impl AttentionBackend for PagedAttention {
                     let token_idx = block_start + local_j;
 
                     // Exclude future tokens for causal attention.
+                    // if the key token is newer than the 
+                    // current query is allowed to see
+                    // then hide it
                     if input.mask == AttentionMask::Causal && token_idx > causal_offset + i {
                         scores.push(f32::NEG_INFINITY);
                         continue;
                     }
 
-                    let key_start = local_j * d_k;
-                    let key = &keys[key_start..key_start + d_k];
+                    let key_start = local_j * *key_vector_dimension;
+                    let key = &keys[key_start..key_start + *key_vector_dimension];
 
                     let mut dot = 0.0_f32;
 
-                    for d in 0..d_k {
+                    // compute the dot product for this key
+                    for d in 0..*key_vector_dimension {
                         dot += query[d] * key[d];
                     }
 
@@ -183,10 +178,10 @@ impl AttentionBackend for PagedAttention {
 
                     denominator += weight;
 
-                    let value_start = local_j * d_v;
-                    let value = &values[value_start..value_start + d_v];
+                    let value_start = local_j * *value_vector_dimension;
+                    let value = &values[value_start..value_start + *value_vector_dimension];
 
-                    for d in 0..d_v {
+                    for d in 0..*value_vector_dimension {
                         accumulator[d] += weight * value[d];
                     }
                 }
@@ -206,6 +201,9 @@ impl AttentionBackend for PagedAttention {
             output.extend_from_slice(&accumulator);
         }
 
-        Ok(Tensor::new(output, vec![seq_q, d_v])?)
+        Ok(Tensor::new(
+            output,
+            vec![*query_sequence_length, *value_vector_dimension],
+        )?)
     }
 }

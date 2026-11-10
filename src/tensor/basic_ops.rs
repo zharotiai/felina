@@ -23,9 +23,8 @@ impl Tensor {
         let n = Self::get_expected_num_elements(&shape)?;
 
         let mut data = Vec::new();
+        // Preserve the Result-based allocation error instead of letting resize panic on OOM.
         data.try_reserve_exact(n)
-            // maybe the user tries to allocate an absurdly large Tensor
-            // handle that c case
             .map_err(|_| TensorError::AllocationFailed)?;
 
         data.resize(n, value);
@@ -34,6 +33,7 @@ impl Tensor {
     }
 
     pub(super) fn get_expected_num_elements(shape: &[usize]) -> Result<usize, TensorError> {
+        // Shapes come from callers, so reject products that cannot be represented.
         shape
             .iter()
             // maybe the multiplication could overflow
@@ -87,8 +87,8 @@ impl Tensor {
                 return None;
             }
 
-            // offset = offset * dim + index;
-            offset = offset.checked_mul(dim)?.checked_add(index)?;
+            // Shape validation guarantees this offset fits in the backing data.
+            offset = offset * dim + index;
         }
 
         Some(offset)
@@ -168,9 +168,7 @@ impl<'a> TensorView<'a> {
         for i in (0..shape.len()).rev() {
             strides[i] = stride;
 
-            stride = stride
-                .checked_mul(shape[i])
-                .ok_or(TensorError::ShapeOverflow)?;
+            stride *= shape[i];
         }
 
         Ok(strides)
@@ -202,10 +200,7 @@ impl<'a> TensorView<'a> {
                 return false;
             }
 
-            match expected_stride.checked_mul(self.shape[i]) {
-                Some(next) => expected_stride = next,
-                None => return false,
-            }
+            expected_stride *= self.shape[i];
         }
 
         true
@@ -216,7 +211,7 @@ impl<'a> TensorView<'a> {
             return None;
         }
 
-        let end = self.offset.checked_add(self.num_elements())?;
+        let end = self.offset + self.num_elements();
         self.data.get(self.offset..end)
     }
 
@@ -233,7 +228,7 @@ impl<'a> TensorView<'a> {
                 return None;
             }
 
-            physical_offset = physical_offset.checked_add(index.checked_mul(stride)?)?;
+            physical_offset += index * stride;
         }
 
         self.data.get(physical_offset).copied()

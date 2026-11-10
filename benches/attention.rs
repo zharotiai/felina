@@ -9,14 +9,21 @@ use felina::inference::attention::{
 };
 use felina::tensor::Tensor;
 
+// Number of distinct token IDs the model can represent.
 const VOCAB_SIZE: usize = 256;
+
+// Width of each token's hidden representation.
 const HIDDEN_SIZE: usize = 128;
+
+// Number of values in each attention head's key and query vectors.
 const HEAD_DIM: usize = 64;
 const GENERATED_TOKENS: usize = 16;
 const CONTEXT_LENGTHS: [usize; 6] = [16, 64, 128, 256, 512, 1024];
 const BLOCK_SIZES: [usize; 3] = [16, 32, 64];
 const INITIAL_KV_CACHE_CAPACITY: usize = 512;
 
+
+// Pseudo-random looking vector used for model weights
 fn deterministic_data(len: usize, seed: u32) -> Vec<f32> {
     (0..len)
         .map(|i| {
@@ -30,6 +37,7 @@ fn deterministic_data(len: usize, seed: u32) -> Vec<f32> {
         .collect()
 }
 
+// Pseudo random looking vector of token ids, used for input
 fn deterministic_tokens(len: usize) -> Vec<usize> {
     (0..len)
         .map(|i| {
@@ -48,7 +56,10 @@ struct Inputs {
     context_tokens: Vec<usize>,
 
     // Model weights.
+
+    // toy embedding for the context tokens
     token_embedding: Tensor,
+
     wq: Tensor,
     wk: Tensor,
     wv: Tensor,
@@ -103,9 +114,8 @@ impl Inputs {
         }
     }
 
-    /// Looks up a single token embedding.
-    ///
-    /// token ID -> [1, hidden_size]
+    // Looks up a single token embedding.
+    // token ID -> [1, hidden_size]
     fn embed_token(&self, token_id: usize) -> Tensor {
         let start = token_id * HIDDEN_SIZE;
 
@@ -116,9 +126,8 @@ impl Inputs {
         .expect("valid token embedding")
     }
 
-    /// Embeds the prefix of the context, excluding the final token.
-    ///
-    /// The final context token is processed as the first decode step.
+    // Embeds the prefix of the context, excluding the final token.
+    // The final context token is processed as the first decode step.
     fn prefix_hidden(&self) -> Tensor {
         let prefix_len = self.context_tokens.len() - 1;
         let mut data = Vec::with_capacity(prefix_len * HIDDEN_SIZE);
@@ -132,7 +141,7 @@ impl Inputs {
         Tensor::new(data, vec![prefix_len, HIDDEN_SIZE]).expect("valid prefix hidden states")
     }
 
-    /// Returns the final token in the context as the first current token.
+    // Returns the final token in the context as the first current token.
     fn initial_current(&self) -> Tensor {
         let token_id = *self
             .context_tokens
@@ -142,7 +151,7 @@ impl Inputs {
         self.embed_token(token_id)
     }
 
-    /// Projects the context prefix into K/V for cache prefill.
+    // Projects the context prefix into K/V for cache prefill.
     fn prefix_kv(&self) -> (Tensor, Tensor) {
         let prefix = self.prefix_hidden();
 
@@ -158,15 +167,15 @@ fn project_q(hidden: &Tensor, wq: &Tensor) -> Tensor {
     hidden.matmul(wq).expect("Q projection")
 }
 
-/// Maps an attention output back into hidden-state space.
+// Maps an attention output back into hidden-state space.
 fn project_output(attention_output: &Tensor, wo: &Tensor) -> Tensor {
     attention_output
         .matmul(wo)
         .expect("attention output projection")
 }
 
-/// Converts a hidden state into vocabulary logits and greedily selects
-/// the next token.
+// Converts a hidden state into vocabulary logits and greedily selects
+// the next token.
 fn next_token(hidden: &Tensor, lm_head: &Tensor) -> usize {
     let logits = hidden.matmul(lm_head).expect("LM head projection");
 
@@ -182,9 +191,8 @@ fn next_token(hidden: &Tensor, lm_head: &Tensor) -> usize {
         .expect("vocabulary must not be empty")
 }
 
-/// Runs autoregressive inference without a KV cache.
-///
-/// K and V are recomputed for the entire growing context on every token.
+// Runs autoregressive inference without a KV cache.
+// K and V are recomputed for the entire growing context on every token.
 fn decode_without_kv_cache(inputs: &Inputs) {
     let prefix = inputs.prefix_hidden();
     let mut history = prefix.data().to_vec();
@@ -229,7 +237,7 @@ fn decode_without_kv_cache(inputs: &Inputs) {
     black_box(current);
 }
 
-/// Runs token-in, token-out autoregressive inference with a contiguous KV cache.
+// Runs token-in, token-out autoregressive inference with a contiguous KV cache.
 fn decode_with_kv_cache(inputs: &Inputs, attention: &mut CachedAttention) {
     let mut current = inputs.initial_current();
 
@@ -258,7 +266,7 @@ fn decode_with_kv_cache(inputs: &Inputs, attention: &mut CachedAttention) {
     black_box(current);
 }
 
-/// Runs token-in, token-out autoregressive inference with a paged KV cache.
+// Runs token-in, token-out autoregressive inference with a paged KV cache.
 fn decode_with_paged_kv_cache(inputs: &Inputs, attention: &mut PagedAttention) {
     let mut current = inputs.initial_current();
 

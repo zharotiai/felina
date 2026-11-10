@@ -54,12 +54,13 @@ impl StandardKvCache {
     }
 
     fn allocate_buffer(capacity: usize, dimension: usize) -> Result<Vec<f32>, KvCacheError> {
-        // allocates a buffer of capacity * dimension size
+        // Cache dimensions are caller-controlled; reject an unrepresentable allocation.
         let element_count = capacity
             .checked_mul(dimension)
             .ok_or(KvCacheError::CapacityOverflow)?;
         
         let mut buffer = Vec::new();
+        // Keep allocation failure recoverable because this API returns a cache error.
         buffer
             .try_reserve_exact(element_count)
             .map_err(|_| KvCacheError::AllocationFailed)?;
@@ -84,21 +85,13 @@ impl StandardKvCache {
 
         let new_capacity = self
             .capacity
-            // double capacity if not big enough
-            .checked_mul(2)
-            .filter(|&capacity| capacity >= required)
-            .unwrap_or(required);
+            .saturating_mul(2)
+            .max(required);
 
         let mut new_keys = Self::allocate_buffer(new_capacity, self.key_dim)?;
         let mut new_values = Self::allocate_buffer(new_capacity, self.value_dim)?;
-        let key_data_length = self
-            .seq_len
-            .checked_mul(self.key_dim)
-            .ok_or(KvCacheError::CapacityOverflow)?;
-        let value_data_length = self
-            .seq_len
-            .checked_mul(self.value_dim)
-            .ok_or(KvCacheError::CapacityOverflow)?;
+        let key_data_length = self.seq_len * self.key_dim;
+        let value_data_length = self.seq_len * self.value_dim;
 
         new_keys[..key_data_length].copy_from_slice(&self.keys[..key_data_length]);
         new_values[..value_data_length].copy_from_slice(&self.values[..value_data_length]);
@@ -124,6 +117,7 @@ impl StandardKvCache {
             return Err(KvCacheError::InvalidShape);
         }
 
+        // Appends may be supplied by callers, so sequence length must remain representable.
         let new_seq_len = self
             .seq_len
             .checked_add(key_sequence_length)
@@ -131,14 +125,9 @@ impl StandardKvCache {
 
         self.ensure_capacity(new_seq_len)?;
 
-        let key_data_start = self
-            .seq_len
-            .checked_mul(self.key_dim)
-            .ok_or(KvCacheError::CapacityOverflow)?;
-        let value_data_start = self
-            .seq_len
-            .checked_mul(self.value_dim)
-            .ok_or(KvCacheError::CapacityOverflow)?;
+        // These offsets feed slices; keep overflow as a typed cache error rather than a panic.
+        let key_data_start = self.seq_len * self.key_dim;
+        let value_data_start = self.seq_len * self.value_dim;
 
         // copy the data over
         self.keys[key_data_start..(key_data_start + keys.len())].copy_from_slice(keys);

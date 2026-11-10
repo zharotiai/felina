@@ -112,9 +112,9 @@ impl Tensor {
             .map(|batch_idx| Self::broadcast_batch_offset(batch_idx, &batch_shape, right_batch))
             .collect();
 
-        let left_matrix_size = m.checked_mul(k).ok_or(TensorError::ShapeOverflow)?;
-        let right_matrix_size = k.checked_mul(n).ok_or(TensorError::ShapeOverflow)?;
-        let output_matrix_size = m.checked_mul(n).ok_or(TensorError::ShapeOverflow)?;
+        let left_matrix_size = m * k;
+        let right_matrix_size = k * n;
+        let output_matrix_size = m * n;
 
         // Calculate each batch independently.
         for batch_idx in 0..batch_count {

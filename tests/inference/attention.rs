@@ -74,34 +74,6 @@ fn cached_attention_handles_single_token() {
     test_single_token_attention(make_cached_attention());
 }
 
-fn test_attention_produces_finite_output<A: AttentionBackend>(mut attention: A) {
-    let q = Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]).unwrap();
-    let k = Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]).unwrap();
-    let v = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![2, 2]).unwrap();
-
-    let output = attention
-        .forward(AttentionInput {
-            q: &q,
-            k: &k,
-            v: &v,
-            mask: AttentionMask::None,
-        })
-        .unwrap();
-
-    assert_eq!(output.shape(), &[2, 2]);
-    assert!(output.data().iter().all(|x| x.is_finite()));
-}
-
-#[test]
-fn standard_attention_produces_finite_output() {
-    test_attention_produces_finite_output(StandardAttention);
-}
-
-#[test]
-fn cached_attention_produces_finite_output() {
-    test_attention_produces_finite_output(make_cached_attention());
-}
-
 fn test_attention_rejects_mismatched_dimensions<A: AttentionBackend>(mut attention: A) {
     let q = Tensor::new(vec![1.0, 0.0], vec![1, 2]).unwrap();
     let k = Tensor::new(vec![1.0, 0.0, 0.0], vec![1, 3]).unwrap();

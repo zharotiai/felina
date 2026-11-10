@@ -17,9 +17,7 @@ impl Tensor {
 
     // Multiplies every element by a scalar.
     pub fn scale(&self, scalar: f32) -> Result<Tensor, TensorError> {
-        let mut data = Vec::new();
-        data.try_reserve_exact(self.data.len())
-            .map_err(|_| TensorError::AllocationFailed)?;
+        let mut data = Vec::with_capacity(self.data.len());
 
         for &value in &self.data {
             data.push(value * scalar);
@@ -50,9 +48,7 @@ impl Tensor {
             });
         };
 
-        let mut data = Vec::new();
-        data.try_reserve_exact(self.data.len())
-            .map_err(|_| TensorError::AllocationFailed)?;
+        let mut data = Vec::with_capacity(self.data.len());
 
         // An empty last dimension means there are no elements to process.
         if last_dim == 0 {
@@ -100,11 +96,8 @@ impl Tensor {
             });
         }
 
-        let mut data = Vec::new();
-        data.try_reserve_exact(self.data.len())
-            .map_err(|_| TensorError::AllocationFailed)?;
+        let mut data = Vec::with_capacity(self.data.len());
 
-        // try_reserve_exact removes any potential resizing overhead
         for (&a, &b) in self.data.iter().zip(&other.data) {
             data.push(operation(a, b));
         }
