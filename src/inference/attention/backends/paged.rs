@@ -1,10 +1,10 @@
-// src/inference/attention/paged.rs
+// src/inference/attention/backends/paged.rs
 
 use crate::tensor::Tensor;
 
-use super::error::PagedKvCacheError;
-use super::paged_cache::PagedKvCache;
-use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
+use super::super::cache::PagedKvCache;
+use super::super::error::PagedKvCacheError;
+use super::super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
 // Attention over a paged KV cache.
 

@@ -1,8 +1,8 @@
-// src/inference/attention/standard.rs
+// src/inference/attention/backends/standard.rs
 
 use crate::tensor::Tensor;
 
-use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
+use super::super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
 pub struct StandardAttention;
 

@@ -1,6 +1,6 @@
-// src/inference/attention/kv_cache.rs
+// src/inference/attention/cache/standard.rs
 
-use super::error::KvCacheError;
+use super::super::error::KvCacheError;
 
 // A contiguous KV cache with dynamically growing capacity.
 pub struct StandardKvCache {

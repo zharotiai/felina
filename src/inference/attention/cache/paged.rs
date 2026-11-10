@@ -1,6 +1,6 @@
-// src/inference/attention/paged_cache.rs
+// src/inference/attention/cache/paged.rs
 
-use super::error::PagedKvCacheError;
+use super::super::error::PagedKvCacheError;
 
 // A fixed-size block containing rows of key or value vectors.
 

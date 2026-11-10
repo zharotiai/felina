@@ -1,4 +1,4 @@
-// src/inference/attention/cached.rs
+// src/inference/attention/backends/cached.rs
 
 use crate::tensor::Tensor;
 
@@ -7,10 +7,10 @@ TODO potentially remove having the cache as an input to a constructor?
 Maybe every constructor shouldn't care about the cache
 */
 
-use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
+use super::super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
-use super::error::KvCacheError;
-use super::kv_cache::StandardKvCache;
+use super::super::cache::StandardKvCache;
+use super::super::error::KvCacheError;
 
 pub struct CachedAttention {
     cache: StandardKvCache,
