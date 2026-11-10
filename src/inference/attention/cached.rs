@@ -40,27 +40,26 @@ impl CachedAttention {
 }
 
 impl AttentionBackend for CachedAttention {
+    // The cached version can receive less data, since it uses the cache
+    // Standard version must receive the full K and V matrices on each .forward() call
     fn forward(&mut self, input: AttentionInput<'_>) -> Result<Tensor, AttentionError> {
-        let q_shape = input.q.shape();
-        let k_shape = input.k.shape();
-        let v_shape = input.v.shape();
-
-        if q_shape.len() != 2 || k_shape.len() != 2 || v_shape.len() != 2 {
+        let [query_sequence_length, key_vector_dimension]: &[usize] = input.q.shape() else {
             return Err(AttentionError::InvalidShape);
-        }
+        };
 
-        let seq_q = q_shape[0];
-        let d_k = q_shape[1];
-        let seq_new_k = k_shape[0];
-        let d_v = v_shape[1];
+        let [input_key_sequence_length, key_dimension]: &[usize] = input.k.shape() else {
+            return Err(AttentionError::InvalidShape);
+        };
 
-        if seq_q == 0
-            || d_k == 0
-            || d_v == 0
-            || k_shape[1] != d_k
-            || v_shape[0] != seq_new_k
-            || self.cache.key_dim() != d_k
-            || self.cache.value_dim() != d_v
+        let [input_value_sequence_length, value_vector_dimension]: &[usize] = input.v.shape()
+        else {
+            return Err(AttentionError::InvalidShape);
+        };
+
+        if key_vector_dimension != key_dimension
+            || input_key_sequence_length != input_value_sequence_length
+            || *key_vector_dimension != self.cache.key_dim()
+            || *value_vector_dimension != self.cache.value_dim()
         {
             return Err(AttentionError::InvalidShape);
         }
@@ -68,61 +67,43 @@ impl AttentionBackend for CachedAttention {
         // Append only the new K/V rows.
         self.cache.append(input.k.data(), input.v.data())?;
 
-        let seq_k = self.cache.seq_len();
+        let key_sequence_length = self.cache.seq_len();
 
-        if seq_k == 0 || seq_q > seq_k {
+        if key_sequence_length == 0 || *query_sequence_length > key_sequence_length {
             return Err(AttentionError::InvalidShape);
         }
 
-        // Borrow the cache directly. No copying of cached K/V data.
-        let keys = self.cache.keys_data();
-        let values = self.cache.values_data();
+        // Scores = QK^T / sqrt(key_vector_dimension)
+        let cached_keys = Tensor::new(
+            self.cache.keys_data().to_vec(),
+            vec![key_sequence_length, *key_vector_dimension],
+        )?;
+        let cached_values = Tensor::new(
+            self.cache.values_data().to_vec(),
+            vec![key_sequence_length, *value_vector_dimension],
+        )?;
+        let cached_keys_transposed = cached_keys.transpose()?;
+        let scores = input.q.matmul(&cached_keys_transposed)?;
+        let scale = 1.0 / (*key_vector_dimension as f32).sqrt();
+        let mut scores = scores.scale(scale)?;
 
-        // Scores = QK^T / sqrt(d_k)
-        let scale = 1.0 / (d_k as f32).sqrt();
-        let causal_offset = seq_k - seq_q;
+        if input.mask == AttentionMask::Causal {
+            let causal_offset = key_sequence_length - *query_sequence_length;
 
-        let mut scores = Tensor::zeros(vec![seq_q, seq_k])?;
+            for i in 0..*query_sequence_length {
+                let last_visible_key = causal_offset + i;
 
-        for i in 0..seq_q {
-            for j in 0..seq_k {
-                let mut dot = 0.0;
-
-                for d in 0..d_k {
-                    dot += input.q.data()[i * d_k + d] * keys[j * d_k + d];
+                for j in (last_visible_key + 1)..key_sequence_length {
+                    scores
+                        .set(&[i, j], f32::NEG_INFINITY)
+                        .ok_or(AttentionError::InvalidTensorIndex)?;
                 }
-
-                let score = if input.mask == AttentionMask::Causal && j > causal_offset + i {
-                    f32::NEG_INFINITY
-                } else {
-                    dot * scale
-                };
-
-                scores
-                    .set(&[i, j], score)
-                    .ok_or(AttentionError::InvalidTensorIndex)?;
             }
         }
 
-        // Probabilities = softmax(scores)
         let probabilities = scores.softmax_last_dim()?;
 
-        // Output = probabilities * V
-        let mut output = Tensor::zeros(vec![seq_q, d_v])?;
-
-        for i in 0..seq_q {
-            for d in 0..d_v {
-                let mut sum = 0.0;
-
-                for j in 0..seq_k {
-                    sum += probabilities.data()[i * seq_k + j] * values[j * d_v + d];
-                }
-
-                output
-                    .set(&[i, d], sum)
-                    .ok_or(AttentionError::InvalidTensorIndex)?;
-            }
-        }
+        let output = probabilities.matmul(&cached_values)?;
 
         Ok(output)
     }

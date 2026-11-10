@@ -325,7 +325,7 @@ fn report_memory_growth() {
 
         paged
             .cache_mut()
-            .append(&prefix_k, &prefix_v)
+            .append(prefix_k.data(), prefix_v.data())
             .expect("prefill paged cache");
 
         print_memory_row(
@@ -470,7 +470,7 @@ fn kv_cache_benefit(c: &mut Criterion) {
 
                             attention
                                 .cache_mut()
-                                .append(&prefix_k, &prefix_v)
+                                .append(prefix_k.data(), prefix_v.data())
                                 .expect("prefill paged cache");
 
                             attention

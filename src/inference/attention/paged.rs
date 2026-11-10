@@ -67,7 +67,7 @@ impl AttentionBackend for PagedAttention {
         }
 
         // Append the new K/V rows to the paged cache.
-        self.cache.append(input.k, input.v)?;
+        self.cache.append(input.k.data(), input.v.data())?;
 
         let seq_k = self.cache.seq_len();
 
