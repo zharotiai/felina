@@ -15,6 +15,7 @@ const HEAD_DIM: usize = 64;
 const GENERATED_TOKENS: usize = 16;
 const CONTEXT_LENGTHS: [usize; 6] = [16, 64, 128, 256, 512, 1024];
 const BLOCK_SIZES: [usize; 3] = [16, 32, 64];
+const INITIAL_KV_CACHE_CAPACITY: usize = 512;
 
 fn deterministic_data(len: usize, seed: u32) -> Vec<f32> {
     (0..len)
@@ -305,12 +306,16 @@ fn report_memory_growth() {
         let inputs = Inputs::new(context_length);
         let (prefix_k, prefix_v) = inputs.prefix_kv();
 
-        let mut standard = CachedAttention::with_capacity_defaults(HEAD_DIM, HEAD_DIM)
+        let mut standard = CachedAttention::with_capacity_defaults(
+            HEAD_DIM,
+            HEAD_DIM,
+            INITIAL_KV_CACHE_CAPACITY,
+        )
             .expect("create contiguous cache");
 
         standard
             .cache_mut()
-            .append(&prefix_k, &prefix_v)
+            .append(prefix_k.data(), prefix_v.data())
             .expect("prefill contiguous cache");
 
         let block_size = 16;
@@ -430,12 +435,16 @@ fn kv_cache_benefit(c: &mut Criterion) {
                 b.iter_batched(
                     || {
                         let mut attention =
-                            CachedAttention::with_capacity_defaults(HEAD_DIM, HEAD_DIM)
+                            CachedAttention::with_capacity_defaults(
+                                HEAD_DIM,
+                                HEAD_DIM,
+                                INITIAL_KV_CACHE_CAPACITY,
+                            )
                                 .expect("create KV cache");
 
                         attention
                             .cache_mut()
-                            .append(&prefix_k, &prefix_v)
+                            .append(prefix_k.data(), prefix_v.data())
                             .expect("prefill contiguous cache");
 
                         attention

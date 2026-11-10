@@ -6,7 +6,7 @@ use felina::inference::attention::{
 use felina::tensor::Tensor;
 
 fn make_cached_attention() -> CachedAttention {
-    CachedAttention::with_capacity_defaults(2, 2).unwrap()
+    CachedAttention::with_capacity_defaults(2, 2, 512).unwrap()
 }
 
 fn test_attention_computes_expected_output<A: AttentionBackend>(mut attention: A) {

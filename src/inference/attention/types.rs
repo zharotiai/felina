@@ -1,8 +1,8 @@
 // src/inference/attention/types.rs
 
-use super::kv_cache::KvCacheError;
-use super::paged_cache::PagedKvCacheError;
-use crate::tensor::{Tensor, TensorError};
+use crate::tensor::Tensor;
+
+use super::error::AttentionError;
 
 pub struct AttentionInput<'a> {
     pub q: &'a Tensor,
@@ -21,11 +21,3 @@ pub enum AttentionMask {
     None,
 }
 
-#[derive(Debug)]
-pub enum AttentionError {
-    InvalidShape,
-    InvalidTensorIndex,
-    Tensor(TensorError),
-    KvCache(KvCacheError),
-    PagedKvCache(PagedKvCacheError),
-}

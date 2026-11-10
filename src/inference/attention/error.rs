@@ -2,14 +2,66 @@
 
 use std::fmt;
 
-use super::kv_cache::KvCacheError;
-use super::paged_cache::PagedKvCacheError;
-use super::types::AttentionError;
 use crate::tensor::TensorError;
+
+#[derive(Debug)]
+pub enum KvCacheError {
+    InvalidShape,
+    CapacityOverflow,
+    AllocationFailed,
+    Tensor(TensorError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PagedKvCacheError {
+    InvalidShape,
+    ShapeOverflow,
+    AllocationFailed,
+}
+
+#[derive(Debug)]
+pub enum AttentionError {
+    InvalidShape,
+    InvalidTensorIndex,
+    Tensor(TensorError),
+    KvCache(KvCacheError),
+    PagedKvCache(PagedKvCacheError),
+}
+
+impl From<TensorError> for KvCacheError {
+    fn from(err: TensorError) -> Self {
+        Self::Tensor(err)
+    }
+}
+
+impl fmt::Display for KvCacheError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidShape => write!(f, "Invalid shapes for KV cache"),
+            Self::CapacityOverflow => write!(f, "KV cache capacity overflow"),
+            Self::AllocationFailed => write!(f, "Failed to allocate KV cache"),
+            Self::Tensor(err) => write!(f, "Tensor error: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for KvCacheError {}
+
+impl fmt::Display for PagedKvCacheError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidShape => write!(f, "Invalid key/value tensor shape"),
+            Self::ShapeOverflow => write!(f, "Paged KV cache shape overflow"),
+            Self::AllocationFailed => write!(f, "Failed to allocate paged KV cache"),
+        }
+    }
+}
+
+impl std::error::Error for PagedKvCacheError {}
 
 impl From<TensorError> for AttentionError {
     fn from(err: TensorError) -> Self {
-        AttentionError::Tensor(err)
+        Self::Tensor(err)
     }
 }
 
@@ -25,35 +77,19 @@ impl From<PagedKvCacheError> for AttentionError {
     }
 }
 
-impl std::error::Error for AttentionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            AttentionError::Tensor(err) => Some(err),
-            AttentionError::InvalidShape | AttentionError::InvalidTensorIndex => None,
-            AttentionError::KvCache(err) => Some(err),
-            AttentionError::PagedKvCache(err) => Some(err),
-        }
-    }
-}
+impl std::error::Error for AttentionError {}
 
 impl fmt::Display for AttentionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AttentionError::InvalidShape => {
-                write!(f, "Invalid tensor shapes for attention")
-            }
-            AttentionError::InvalidTensorIndex => {
+            Self::InvalidShape => write!(f, "Invalid tensor shapes for attention"),
+            Self::InvalidTensorIndex => {
                 write!(f, "Invalid tensor index during attention computation")
             }
-            AttentionError::Tensor(err) => {
-                write!(f, "Tensor error: {err}")
-            }
-            AttentionError::KvCache(err) => {
-                write!(f, "KV cache error: {err}")
-            }
-            AttentionError::PagedKvCache(err) => {
-                write!(f, "Paged KV cache error: {err}")
-            }
+            Self::Tensor(err) => write!(f, "Tensor error: {err}"),
+            Self::KvCache(err) => write!(f, "KV cache error: {err}"),
+            Self::PagedKvCache(err) => write!(f, "Paged KV cache error: {err}"),
         }
     }
 }
+

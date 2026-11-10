@@ -9,7 +9,8 @@ mod standard;
 mod types;
 
 pub use cached::CachedAttention;
-pub use kv_cache::{KvCacheError, StandardKvCache};
+pub use error::{AttentionError, KvCacheError, PagedKvCacheError};
+pub use kv_cache::StandardKvCache;
 pub use paged::PagedAttention;
 pub use standard::StandardAttention;
-pub use types::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
+pub use types::{AttentionBackend, AttentionInput, AttentionMask};

@@ -9,7 +9,8 @@ Maybe every constructor shouldn't care about the cache
 
 use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
-use super::kv_cache::{KvCacheError, StandardKvCache};
+use super::error::KvCacheError;
+use super::kv_cache::StandardKvCache;
 
 pub struct CachedAttention {
     cache: StandardKvCache,
@@ -28,8 +29,12 @@ impl CachedAttention {
         &mut self.cache
     }
 
-    pub fn with_capacity_defaults(key_dim: usize, value_dim: usize) -> Result<Self, KvCacheError> {
-        let cache = StandardKvCache::new(key_dim, value_dim)?;
+    pub fn with_capacity_defaults(
+        key_dim: usize,
+        value_dim: usize,
+        capacity: usize,
+    ) -> Result<Self, KvCacheError> {
+        let cache = StandardKvCache::new(key_dim, value_dim, capacity)?;
         Ok(Self::new(cache))
     }
 }
@@ -61,7 +66,7 @@ impl AttentionBackend for CachedAttention {
         }
 
         // Append only the new K/V rows.
-        self.cache.append(input.k, input.v)?;
+        self.cache.append(input.k.data(), input.v.data())?;
 
         let seq_k = self.cache.seq_len();
 

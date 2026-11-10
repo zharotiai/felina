@@ -2,7 +2,8 @@
 
 use crate::tensor::Tensor;
 
-use super::paged_cache::{PagedKvCache, PagedKvCacheError};
+use super::error::PagedKvCacheError;
+use super::paged_cache::PagedKvCache;
 use super::{AttentionBackend, AttentionError, AttentionInput, AttentionMask};
 
 // Attention over a paged KV cache.

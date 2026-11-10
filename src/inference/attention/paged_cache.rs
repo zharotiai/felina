@@ -1,28 +1,8 @@
 // src/inference/attention/paged_cache.rs
 
-use std::error::Error;
-use std::fmt;
-
 use crate::tensor::Tensor;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PagedKvCacheError {
-    InvalidShape,
-    ShapeOverflow,
-    AllocationFailed,
-}
-
-impl fmt::Display for PagedKvCacheError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidShape => write!(f, "Invalid key/value tensor shape"),
-            Self::ShapeOverflow => write!(f, "Paged KV cache shape overflow"),
-            Self::AllocationFailed => write!(f, "Failed to allocate paged KV cache"),
-        }
-    }
-}
-
-impl Error for PagedKvCacheError {}
+use super::error::PagedKvCacheError;
 
 /// A fixed-size block containing rows of key or value vectors.
 ///

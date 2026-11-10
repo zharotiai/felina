@@ -8,54 +8,64 @@ pub struct StandardAttention;
 
 impl AttentionBackend for StandardAttention {
     fn forward(&mut self, input: AttentionInput<'_>) -> Result<Tensor, AttentionError> {
-        let q_shape = input.q.shape();
-        let k_shape = input.k.shape();
-        let v_shape = input.v.shape();
+        let [query_sequence_length, key_vector_dimension]: &[usize] = input.q.shape() else {
+            return Err(AttentionError::InvalidShape);
+        };
 
-        // This implementation supports 2D, single-head attention.
-        if q_shape.len() != 2 || k_shape.len() != 2 || v_shape.len() != 2 {
+        let [key_sequence_length, key_dimension]: &[usize] = input.k.shape() else {
+            return Err(AttentionError::InvalidShape);
+        };
+
+        let [value_sequence_length, _value_vector_dimension]: &[usize] = input.v.shape() else {
+            return Err(AttentionError::InvalidShape);
+        };
+
+        // Q: query_sequence_length x key_vector_dimension
+        // K^T: key_vector_dimension x key_sequence_length,
+        // so K: key_sequence_length x key_vector_dimension
+        // V: key_sequence_length x value_vector_dimension
+
+        // q_seq_length can be different to key_sequence_length
+        // for example one new token can attend to all the previous tokens
+        if key_vector_dimension != key_dimension || key_sequence_length != value_sequence_length {
             return Err(AttentionError::InvalidShape);
         }
 
-        let seq_q = q_shape[0];
-        let d_k = q_shape[1];
-        let seq_k = k_shape[0];
-        let d_v = v_shape[1];
-
-        if seq_q == 0
-            || seq_k == 0
-            || d_k == 0
-            || d_v == 0
-            || k_shape[1] != d_k
-            || v_shape[0] != seq_k
-        {
-            return Err(AttentionError::InvalidShape);
-        }
-
-        // Scores = QK^T / sqrt(d_k)
+        // Scores = QK^T / sqrt(key_vector_dimension)
         let k_transposed = input.k.transpose()?;
         let scores = input.q.matmul(&k_transposed)?;
-        let scale = 1.0 / (d_k as f32).sqrt();
+
+        // keep the dot product scores from becoming too large
+        // From Attention Is All You Need: 
+        // "[for high d_k] the dot products grow large in magnitude, pushing the softmax function into regions where it has
+        //  extremely small gradients"
+        
+        // let each component be q_i or k_i
+        // when you add components, the variances add
+        // so the variance is d_k multiples of the variance of a single component
+        // dividing by sqrt(d_k) keeps the variance stable
+        let scale = 1.0 / (*key_vector_dimension as f32).sqrt();
         let mut scores = scores.scale(scale)?;
 
-        let causal_offset = seq_k - seq_q;
 
         if input.mask == AttentionMask::Causal {
-            for i in 0..seq_q {
+            // shift the key sequence length
+            let causal_offset = key_sequence_length - query_sequence_length;
+
+            for i in 0..*query_sequence_length {
                 let last_visible_key = causal_offset + i;
 
-                for j in (last_visible_key + 1)..seq_k {
+                for j in (last_visible_key + 1)..*key_sequence_length {
                     scores
-                        .set(&[i, j], f32::NEG_INFINITY)
+                    // negative infinity will lead to 0 softmax score
+                        .set(&[i, j], f32::NEG_INFINITY) 
                         .ok_or(AttentionError::InvalidTensorIndex)?;
                 }
             }
         }
 
-        // Probabilities = softmax(scores)
         let probabilities = scores.softmax_last_dim()?;
 
-        // Output = probabilities * V
         let output = probabilities.matmul(input.v)?;
 
         Ok(output)
